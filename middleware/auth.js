@@ -1,0 +1,76 @@
+const { getDB } = require('../db');
+
+async function requireAdmin(req, res, next) {
+  const token = req.headers['authorization']?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const pool = await getDB();
+
+    // 1. Legacy env-var admin session
+    const [adminRows] = await pool.execute(
+      'SELECT * FROM admin_sessions WHERE token = ? AND expires_at > NOW()',
+      [token]
+    );
+    if (adminRows.length > 0) {
+      req.adminId = adminRows[0].admin_id;
+      return next();
+    }
+
+    // 2. Sys-admin portal session
+    const [portalRows] = await pool.execute(
+      `SELECT ps.portal_user_id FROM portal_sessions ps
+       JOIN portal_users pu ON ps.portal_user_id = pu.id
+       WHERE ps.token = ? AND ps.expires_at > NOW() AND pu.portal_role = 'sys-admin'`,
+      [token]
+    );
+    if (portalRows.length > 0) {
+      req.adminId      = 1; // virtual — satisfies routes that reference req.adminId
+      req.portalUserId = portalRows[0].portal_user_id;
+      req.isSysAdmin   = true;
+      return next();
+    }
+
+    return res.status(401).json({ error: 'Session expired. Please login again.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}
+
+async function requireEmployee(req, res, next) {
+  const token = req.headers['authorization']?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const pool = await getDB();
+    const [rows] = await pool.execute(
+      'SELECT * FROM portal_sessions WHERE token = ? AND expires_at > NOW()',
+      [token]
+    );
+    if (rows.length === 0) return res.status(401).json({ error: 'Session expired. Please login again.' });
+    req.portalUserId = rows[0].portal_user_id;
+    req.employeeId   = rows[0].portal_user_id;
+    next();
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}
+
+async function requireTeamLead(req, res, next) {
+  const token = req.headers['authorization']?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const pool = await getDB();
+    const [rows] = await pool.execute(
+      `SELECT ps.portal_user_id, pu.portal_role, pu.department, pu.employee_id
+       FROM portal_sessions ps
+       JOIN portal_users pu ON ps.portal_user_id = pu.id
+       WHERE ps.token = ? AND ps.expires_at > NOW()
+       AND pu.portal_role IN ('team-lead', 'sys-admin')`,
+      [token]
+    );
+    if (rows.length === 0) return res.status(401).json({ error: 'Session expired or insufficient permissions.' });
+    req.portalUserId        = rows[0].portal_user_id;
+    req.employeeId          = rows[0].portal_user_id;
+    req.teamDepartment      = rows[0].department;
+    req.portalRole          = rows[0].portal_role;
+    req.teamLeadEmployeeId  = rows[0].employee_id;
+    next();
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}
+
+module.exports = { requireAdmin, requireEmployee, requireTeamLead };

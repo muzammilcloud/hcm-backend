@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8
+
+    container_name: queckots-mysql
+
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: queckots
+      MYSQL_USER: quecko-ts-user
+      MYSQL_PASSWORD: qpass123$%
+
+    ports:
+      - "3306:3306"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+    command: --default-authentication-plugin=mysql_native_password
+
+volumes:
+  mysql_data:
