@@ -1,6 +1,7 @@
 const axios  = require('axios');
 const crypto = require('crypto');
 const { getDB } = require('../db');
+const { OT_THRESHOLD_HOURS } = require('../config/business');
 
 // Verify Slack signing secret so only real Slack requests are accepted
 function verifySlackSignature(req) {
@@ -164,7 +165,7 @@ async function checkOvertimePrompts() {
       FROM portal_time_entries pte
       JOIN portal_users pu ON pte.portal_user_id = pu.id
       WHERE pte.clock_out IS NULL AND pte.ot_prompt_sent = 0
-      HAVING hours_worked >= 9
+      HAVING hours_worked >= ${OT_THRESHOLD_HOURS}
     `);
 
     for (const entry of activeEntries) {

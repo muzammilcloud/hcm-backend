@@ -2,6 +2,7 @@ const express = require('express');
 const axios   = require('axios');
 const router  = express.Router();
 const { getDB, logEvent } = require('../db');
+const { OT_THRESHOLD_MS } = require('../config/business');
 const {
   getEmployeeBySlackId,
   postToSlack,
@@ -198,7 +199,7 @@ router.post('/interactive', async (req, res) => {
 
       if (entry.length > 0 && !entry[0].clock_out) {
         const clockIn  = new Date(entry[0].clock_in);
-        const clockOut = new Date(clockIn.getTime() + (9 * 60 * 60 * 1000));
+        const clockOut = new Date(clockIn.getTime() + (OT_THRESHOLD_MS));
 
         await pool.execute(
           'UPDATE portal_time_entries SET clock_out = ?, ot_decision = ? WHERE id = ?',
@@ -244,7 +245,7 @@ router.post('/interactive', async (req, res) => {
         const [entry] = await pool.execute('SELECT * FROM portal_time_entries WHERE id = ?', [timeEntryId]);
         if (entry.length > 0) {
           const clockIn  = new Date(entry[0].clock_in);
-          const clockOut = new Date(clockIn.getTime() + (9 * 60 * 60 * 1000));
+          const clockOut = new Date(clockIn.getTime() + (OT_THRESHOLD_MS));
 
           await pool.execute('UPDATE portal_time_entries SET clock_out = ? WHERE id = ?', [clockOut, timeEntryId]);
 

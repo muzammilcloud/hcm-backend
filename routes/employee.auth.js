@@ -1,6 +1,6 @@
 const express = require('express');
 const router  = express.Router();
-const { getDB, hashPassword, generateToken, logEvent } = require('../db');
+const { getDB, hashPassword, verifyPassword, generateToken, logEvent } = require('../db');
 const { requireEmployee } = require('../middleware/auth');
 const { sendPasswordResetEmail } = require('../services/email');
 
@@ -48,17 +48,25 @@ router.post('/invite/:token/set-password', async (req, res) => {
 });
 
 // POST /api/employee/login
-router.post('/employee/login', async (req, res) => {
+router.post('/employee/login', async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   try {
     const pool = await getDB();
     const [rows] = await pool.execute(
-      "SELECT * FROM portal_users WHERE LOWER(email) = LOWER(?) AND password_hash = ? AND status = 'active'",
-      [email, hashPassword(password)]
+      "SELECT * FROM portal_users WHERE LOWER(email) = LOWER(?) AND status = 'active'",
+      [email]
     );
     if (rows.length === 0) return res.status(401).json({ error: 'Invalid email or password, or account not yet activated.' });
     const pu = rows[0];
+
+    const { ok, needsRehash } = verifyPassword(password, pu.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid email or password, or account not yet activated.' });
+
+    if (needsRehash) {
+      try { await pool.execute('UPDATE portal_users SET password_hash = ? WHERE id = ?', [hashPassword(password), pu.id]); }
+      catch (e) { console.error('Password rehash failed:', e.message); }
+    }
 
     const portalRole = pu.portal_role || 'employee';
     const token      = generateToken();
@@ -67,7 +75,7 @@ router.post('/employee/login', async (req, res) => {
     await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
 
     res.json({ token, expires_at: expiresAt, role: portalRole, employee: { id: pu.id, name: pu.name, email: pu.email, role: pu.role, department: pu.department, portal_role: portalRole } });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { next(e); }
 });
 
 // POST /api/employee/logout

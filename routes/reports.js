@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { sendWeeklyReports, sendMonthlyReports, sendMonthlySalarySlips } = require('../services/scheduler');
+const { OT_THRESHOLD_HOURS } = require('../config/business');
 
 // GET /api/reports/summary
 router.get('/reports/summary', requireAdmin, async (req, res) => {
@@ -113,7 +114,7 @@ router.get('/reports/overtime', requireAdmin, async (req, res) => {
         e.id as employee_id, e.name, e.department, e.role,
         DATE_FORMAT(te.clock_in, '%Y-%m-%d') as date,
         ROUND(SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600), 2) as total_hours,
-        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600) - 9), 2) as ot_hours
+        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600) - ${OT_THRESHOLD_HOURS}), 2) as ot_hours
       FROM employees e
       JOIN time_entries te ON e.id = te.employee_id
       WHERE te.clock_out IS NOT NULL
@@ -138,7 +139,7 @@ router.get('/employee/overtime', requireEmployee, async (req, res) => {
       SELECT
         DATE_FORMAT(clock_in, '%Y-%m-%d') as date,
         ROUND(SUM(TIMESTAMPDIFF(SECOND, clock_in, COALESCE(clock_out, NOW())) / 3600), 2) as total_hours,
-        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND, clock_in, COALESCE(clock_out, NOW())) / 3600) - 9), 2) as ot_hours
+        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND, clock_in, COALESCE(clock_out, NOW())) / 3600) - ${OT_THRESHOLD_HOURS}), 2) as ot_hours
       FROM time_entries
       WHERE employee_id = ? AND clock_out IS NOT NULL
     `;

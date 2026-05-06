@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB, logEvent } = require('../db');
 const { requireEmployee, requireTeamLead, requireAdmin } = require('../middleware/auth');
 const { dmUser, dmRoleInDept, dmAllSysAdmins, notify } = require('../services/notifications');
+const { OT_THRESHOLD_HOURS } = require('../config/business');
 
 const toMySQL = iso => new Date(iso).toISOString().slice(0, 19).replace('T', ' ');
 
@@ -16,8 +17,8 @@ async function recalcOT(pool, entryId, portalUserId) {
     const entry = rows[0];
     const sessionHours = (new Date(entry.clock_out) - new Date(entry.clock_in)) / 3600000;
 
-    if (sessionHours > 9) {
-      const otHours = parseFloat((sessionHours - 9).toFixed(2));
+    if (sessionHours > OT_THRESHOLD_HOURS) {
+      const otHours = parseFloat((sessionHours - OT_THRESHOLD_HOURS).toFixed(2));
       if (otHours > 0) {
         await pool.execute(
           `INSERT INTO ot_requests (time_entry_id, employee_id, date, total_hours, ot_hours, idle_deducted)

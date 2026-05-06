@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB, logEvent } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { postToSlack, getSlackUserIdByEmail, sendSlackDM } = require('../services/slack');
+const { OT_THRESHOLD_HOURS, OT_THRESHOLD_MS } = require('../config/business');
 
 // POST /api/employee/clock-in
 router.post('/employee/clock-in', requireEmployee, async (req, res) => {
@@ -40,7 +41,7 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     const entry       = active[0];
     const hoursWorked = (Date.now() - new Date(entry.clock_in).getTime()) / 3600000;
 
-    if (hoursWorked >= 9 && !entry.ot_decision) {
+    if (hoursWorked >= OT_THRESHOLD_HOURS && !entry.ot_decision) {
       const [puInfo] = await pool.execute('SELECT * FROM portal_users WHERE id=?', [req.portalUserId]);
       const pu = puInfo[0];
       let slackUserId = pu?.slack_user_id;
@@ -62,7 +63,7 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     }
 
     if (entry.ot_decision === 'stopped') {
-      const clockOut = new Date(new Date(entry.clock_in).getTime() + 9 * 3600000);
+      const clockOut = new Date(new Date(entry.clock_in).getTime() + OT_THRESHOLD_MS);
       await pool.execute('UPDATE portal_time_entries SET clock_out=? WHERE id=?', [clockOut, entry.id]);
     } else {
       await pool.execute('UPDATE portal_time_entries SET clock_out=NOW() WHERE id=?', [entry.id]);
@@ -71,8 +72,8 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM portal_time_entries WHERE id=?', [entry.id]);
     const sessionHours = (new Date(rows[0].clock_out) - new Date(rows[0].clock_in)) / 3600000;
 
-    if (sessionHours > 9) {
-      const otHours = parseFloat((sessionHours - 9).toFixed(2));
+    if (sessionHours > OT_THRESHOLD_HOURS) {
+      const otHours = parseFloat((sessionHours - OT_THRESHOLD_HOURS).toFixed(2));
       if (otHours > 0) {
         await pool.execute(
           `INSERT INTO ot_requests (time_entry_id, employee_id, date, total_hours, ot_hours, idle_deducted)
