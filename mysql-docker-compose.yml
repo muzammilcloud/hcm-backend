@@ -1,26 +1,93 @@
-version: "3.8"
+# ────────────────────────────────────────────────────────────────────────────
+# MySQL — standalone compose for the Tickin backend.
+#
+# Usage:
+#   1. Create a .env file next to this file with:
+#        MYSQL_ROOT_PASSWORD=<strong-password>
+#        MYSQL_DATABASE=tickin
+#        MYSQL_USER=tickin
+#        MYSQL_PASSWORD=<strong-password>
+#
+#   2. Start MySQL:
+#        docker compose -f mysql-docker-compose.yml --env-file .env up -d
+#
+#   3. Deploy the backend container with the same Docker network:
+#        docker run -d --name tickin-backend \
+#          --network tickin \
+#          --env-file /path/to/backend.env \
+#          -p 4001:4001 \
+#          <your-image>:latest
+#
+#      In the backend's env, set:
+#        DB_HOST=mysql            (service name on the shared network)
+#        DB_PORT=3306
+#        DB_USER=tickin
+#        DB_PASSWORD=<same as MYSQL_PASSWORD>
+#        DB_NAME=tickin
+#
+# Notes:
+#   - Port 3306 is bound to 127.0.0.1 only — not reachable from the public
+#     internet. Remove the `ports:` block entirely if you don't need an
+#     external MySQL client either.
+#   - Tuned for ~300 MB resident on a 1 GiB host. Bump
+#     innodb-buffer-pool-size up if you give the box more RAM.
+# ────────────────────────────────────────────────────────────────────────────
 
 services:
   mysql:
-    image: mysql:8
-
-    container_name: queckots-mysql
-
+    image: mysql:8.0
+    container_name: tickin-mysql
     restart: unless-stopped
 
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: queckots
-      MYSQL_USER: quecko-ts-user
-      MYSQL_PASSWORD: qpass123$%
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-tickin}
+      MYSQL_USER:          ${MYSQL_USER:-tickin}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
 
-    ports:
-      - "3306:3306"
+    # Memory-conscious tuning for small hosts (≈ 1 GiB).
+    # The single biggest saving is performance_schema=OFF (~120 MB).
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --innodb-log-buffer-size=8M
+      - --max-connections=20
+      - --thread-cache-size=4
+      - --table-open-cache=200
+      - --performance-schema=OFF
+      - --innodb-flush-method=O_DIRECT
+      - --skip-name-resolve
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
 
     volumes:
       - mysql_data:/var/lib/mysql
 
-    command: --default-authentication-plugin=mysql_native_password
+    # Bind to loopback only. Backend reaches MySQL via the shared network,
+    # not via host. Delete this block to make MySQL not externally reachable
+    # at all (recommended once you have a working MySQL client elsewhere).
+    ports:
+      - "127.0.0.1:3306:3306"
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    deploy:
+      resources:
+        limits:
+          memory: 350M
+
+    networks:
+      - tickin
 
 volumes:
   mysql_data:
+    name: tickin_mysql_data
+
+networks:
+  tickin:
+    name: tickin
+    driver: bridge
