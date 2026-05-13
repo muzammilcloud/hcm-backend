@@ -1,0 +1,117 @@
+name: Deploy to main branch
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploying to Production Server
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      IMAGE_NAME: tickin-api-prod
+      CONTAINER_NAME: tickin-api-prod
+      DEPLOY_PATH: /home/ubuntu/tickin-api/hcm-backend
+
+    steps:
+      # =========================
+      # 1. Setup SSH key
+      # =========================
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      # =========================
+      # 2. Deploy on remote server
+      # =========================
+      - name: Deploy on remote server
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              "${{ secrets.USERNAME }}@${{ secrets.HOST }}" \
+              bash -s -- "${IMAGE_NAME}" "${CONTAINER_NAME}" "${DEPLOY_PATH}" << 'ENDSSH'
+          set -e
+          IMAGE_NAME="$1"
+          CONTAINER_NAME="$2"
+          DEPLOY_PATH="$3"
+
+          cd "$DEPLOY_PATH"
+
+          echo "=== Pull latest code ==="
+          git fetch origin main
+          git reset --hard origin/main
+
+          echo "=== Build new image ==="
+          docker build --no-cache -t "$IMAGE_NAME:new" .
+
+          echo "=== Cleanup old candidate ==="
+          docker rm -f "${CONTAINER_NAME}-candidate" || true
+
+          echo "=== Start candidate container (no traffic) ==="
+          docker run -d \
+            --name "${CONTAINER_NAME}-candidate" \
+            --env-file .env \
+            "$IMAGE_NAME:new"
+
+          echo "=== Wait for healthcheck ==="
+          HEALTHY=0
+          for i in {1..25}; do
+            STATUS=$(docker inspect \
+              --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' \
+              "${CONTAINER_NAME}-candidate")
+            echo "Status: $STATUS"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Candidate is healthy ✓"
+              HEALTHY=1
+              break
+            fi
+            if [ "$STATUS" = "unhealthy" ]; then
+              echo "Candidate became unhealthy ✗"
+              docker logs "${CONTAINER_NAME}-candidate" --tail 50 || true
+              docker rm -f "${CONTAINER_NAME}-candidate" || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+          if [ "$HEALTHY" -ne 1 ]; then
+            echo "Healthcheck timeout ✗"
+            docker logs "${CONTAINER_NAME}-candidate" --tail 50 || true
+            docker rm -f "${CONTAINER_NAME}-candidate" || true
+            exit 1
+          fi
+
+          echo "=== Switching to new version ==="
+          docker stop "$CONTAINER_NAME" || true
+          docker rm   "$CONTAINER_NAME" || true
+          docker run -d \
+            --name "$CONTAINER_NAME" \
+            --env-file .env \
+            -p 4001:4001 \
+            "$IMAGE_NAME:new"
+          docker rm -f "${CONTAINER_NAME}-candidate" || true
+
+          echo "=== Running containers ==="
+          docker ps
+
+          echo "=== Logs ==="
+          docker logs "$CONTAINER_NAME" --tail 50 || true
+
+          echo "=== Cleanup old images ==="
+          IMAGES=$(docker images "$IMAGE_NAME" --format "{{.ID}}")
+          COUNT=$(echo "$IMAGES" | wc -l)
+          if [ "$COUNT" -gt 1 ]; then
+            echo "$IMAGES" | tail -n +2 | xargs -r docker rmi -f
+          else
+            echo "No old images to clean."
+          fi
+          ENDSSH
+
+      # =========================
+      # 3. Cleanup local SSH key
+      # =========================
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
