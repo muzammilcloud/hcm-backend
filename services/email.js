@@ -21,12 +21,12 @@ async function sendInviteEmail({ name, email, inviteToken }) {
       <div style="max-width:520px;margin:40px auto;background:#0f172a;border-radius:16px;overflow:hidden;border:1px solid #1e293b;">
         <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px;text-align:center;">
           <div style="font-size:36px;margin-bottom:8px;">⏱</div>
-          <h1 style="margin:0;color:#fff;font-size:24px;font-weight:800;">Welcome to Quecko-HCM</h1>
-          <p style="margin:8px 0 0;color:#e0e7ff;font-size:14px;">Time Tracking System</p>
+          <h1 style="margin:0;color:#fff;font-size:24px;font-weight:800;">Welcome to Tickin</h1>
+          <p style="margin:8px 0 0;color:#e0e7ff;font-size:14px;">Modern HR Platform</p>
         </div>
         <div style="padding:32px;">
           <p style="color:#94a3b8;font-size:15px;margin:0 0 16px;">Hi <strong style="color:#f1f5f9;">${name}</strong>,</p>
-          <p style="color:#94a3b8;font-size:15px;margin:0 0 24px;">You've been invited to join <strong style="color:#f1f5f9;">Quecko-HCM</strong>. Click the button below to set your password and activate your account.</p>
+          <p style="color:#94a3b8;font-size:15px;margin:0 0 24px;">You've been invited to join <strong style="color:#f1f5f9;">Tickin</strong>. Click the button below to set your password and activate your account.</p>
           <div style="background:#1e293b;border-radius:12px;padding:20px;margin-bottom:24px;">
             <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px;">Your Login Email</div>
             <div style="font-size:16px;color:#f1f5f9;font-weight:600;">${email}</div>
@@ -38,7 +38,7 @@ async function sendInviteEmail({ name, email, inviteToken }) {
           <p style="color:#334155;font-size:11px;margin:0;text-align:center;word-break:break-all;">Or copy this link: ${inviteUrl}</p>
         </div>
         <div style="background:#090e1a;padding:16px;text-align:center;border-top:1px solid #1e293b;">
-          <p style="margin:0;color:#334155;font-size:12px;">Quecko-HCM · Time Tracking System</p>
+          <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
         </div>
       </div>
     </body>
@@ -46,9 +46,9 @@ async function sendInviteEmail({ name, email, inviteToken }) {
   `;
   try {
     await transporter.sendMail({
-      from:    `"Quecko-HCM" <${process.env.SMTP_USER}>`,
+      from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      email,
-      subject: '🎉 You\'re invited to Quecko-HCM — Set your password',
+      subject: '🎉 You\'re invited to Tickin — Set your password',
       html,
     });
     console.log(`✅ Invite email sent to ${email}`);
@@ -75,11 +75,11 @@ async function sendLeaveRequestEmail({ employeeName, department, leaveType, star
         <table style="width:100%;border-collapse:collapse;">
           ${[['Leave Type',leaveType],['Duration',durationLabel],['From',startDate],['To',endDate],['Reason',reason||'—']].map(([k,v])=>`<tr><td style="padding:10px 14px;background:#1e293b;color:#64748b;font-size:13px;font-weight:600;width:120px;">${k}</td><td style="padding:10px 14px;color:#f1f5f9;font-size:13px;">${v}</td></tr>`).join('')}
         </table>
-        <p style="color:#475569;font-size:13px;margin:20px 0 0;">Login to <strong style="color:#a5b4fc;">Quecko-HCM</strong> to approve or deny this request.</p>
+        <p style="color:#475569;font-size:13px;margin:20px 0 0;">Login to <strong style="color:#a5b4fc;">Tickin</strong> to approve or deny this request.</p>
       </div>
     </div></body>`;
   try {
-    await transporter.sendMail({ from:`"Quecko-HCM" <${process.env.SMTP_USER}>`, to:adminEmail, subject:`🏖 Leave Request — ${employeeName} (${leaveType})`, html });
+    await transporter.sendMail({ from:`"Tickin" <${process.env.SMTP_USER}>`, to:adminEmail, subject:`🏖 Leave Request — ${employeeName} (${leaveType})`, html });
   } catch(e) { console.error('Leave request email failed:', e.message); }
 }
 
@@ -103,7 +103,7 @@ async function sendLeaveStatusEmail({ employeeEmail, employeeName, status, leave
       </div>
     </div></body>`;
   try {
-    await transporter.sendMail({ from:`"Quecko-HCM" <${process.env.SMTP_USER}>`, to:employeeEmail, subject:`${icon} Your leave request has been ${status}`, html });
+    await transporter.sendMail({ from:`"Tickin" <${process.env.SMTP_USER}>`, to:employeeEmail, subject:`${icon} Your leave request has been ${status}`, html });
   } catch(e) { console.error('Leave status email failed:', e.message); }
 }
 
@@ -121,11 +121,11 @@ async function sendReportEmail({ to, subject, title, subtitle, rows, columns }) 
       </div>
       <div style="padding:28px;">
         <table style="width:100%;border-collapse:collapse;"><thead><tr>${headerRow}</tr></thead><tbody>${dataRows}</tbody></table>
-        <p style="color:#334155;font-size:12px;margin:20px 0 0;text-align:center;">Quecko-HCM · Time Tracking System</p>
+        <p style="color:#334155;font-size:12px;margin:20px 0 0;text-align:center;">Tickin · Modern HR Platform</p>
       </div>
     </div></body>`;
   try {
-    await transporter.sendMail({ from:`"Quecko-HCM" <${process.env.SMTP_USER}>`, to, subject, html });
+    await transporter.sendMail({ from:`"Tickin" <${process.env.SMTP_USER}>`, to, subject, html });
   } catch(e) { console.error(`Report email to ${to} failed:`, e.message); }
 }
 
@@ -141,7 +141,7 @@ async function sendPasswordResetEmail({ name, email, resetToken }) {
         <div style="background:linear-gradient(135deg,#f59e0b,#f97316);padding:32px;text-align:center;">
           <div style="font-size:36px;margin-bottom:8px;">🔑</div>
           <h1 style="margin:0;color:#fff;font-size:24px;font-weight:800;">Password Reset</h1>
-          <p style="margin:8px 0 0;color:#fed7aa;font-size:14px;">Quecko-HCM Time Tracking</p>
+          <p style="margin:8px 0 0;color:#fed7aa;font-size:14px;">Tickin Time Tracking</p>
         </div>
         <div style="padding:32px;">
           <p style="color:#94a3b8;font-size:15px;margin:0 0 16px;">Hi <strong style="color:#f1f5f9;">${name}</strong>,</p>
@@ -156,7 +156,7 @@ async function sendPasswordResetEmail({ name, email, resetToken }) {
           </div>
         </div>
         <div style="background:#090e1a;padding:16px;text-align:center;border-top:1px solid #1e293b;">
-          <p style="margin:0;color:#334155;font-size:12px;">Quecko-HCM · Time Tracking System</p>
+          <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
         </div>
       </div>
     </body>
@@ -164,9 +164,9 @@ async function sendPasswordResetEmail({ name, email, resetToken }) {
   `;
   try {
     await transporter.sendMail({
-      from:    `"Quecko-HCM" <${process.env.SMTP_USER}>`,
+      from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      email,
-      subject: '🔑 Reset Your Password — Quecko-HCM',
+      subject: '🔑 Reset Your Password — Tickin',
       html,
     });
     console.log(`✅ Password reset email sent to ${email}`);
@@ -199,8 +199,8 @@ async function sendSalarySlipEmail(employee, slip, monthLabel) {
 
     <!-- Header -->
     <div style="background:#0f172a;padding:24px 28px 0;text-align:center;border-bottom:1px solid #1e293b;">
-      <a href="https://www.quecko.com" style="color:#3b82f6;font-size:14px;font-weight:700;text-decoration:none;">www.Quecko.com</a>
-      <h1 style="margin:10px 0 4px;color:#f1f5f9;font-size:22px;font-weight:800;">Quecko Inc.</h1>
+      <a href="https://tickin.pro" style="color:#3b82f6;font-size:14px;font-weight:700;text-decoration:none;">tickin.pro</a>
+      <h1 style="margin:10px 0 4px;color:#f1f5f9;font-size:22px;font-weight:800;">Tickin</h1>
       <p style="margin:0 0 0;color:#94a3b8;font-size:14px;font-weight:600;">Salary Slip</p>
     </div>
 
@@ -334,7 +334,7 @@ async function sendSalarySlipEmail(employee, slip, monthLabel) {
   </body>`;
 
   await transporter.sendMail({
-    from: `"Quecko HR" <${process.env.SMTP_USER}>`,
+    from: `"Tickin" <${process.env.SMTP_USER}>`,
     to: employee.email,
     subject: `Salary Slip — ${monthLabel}`,
     html,
@@ -367,15 +367,15 @@ async function sendBirthdayReminderEmail({ adminEmail, employees }) {
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <p style="color:#475569;font-size:13px;margin:20px 0 0;text-align:center;">Log in to <strong style="color:#a5b4fc;">Quecko-HCM</strong> to send personal wishes!</p>
+        <p style="color:#475569;font-size:13px;margin:20px 0 0;text-align:center;">Log in to <strong style="color:#a5b4fc;">Tickin</strong> to send personal wishes!</p>
       </div>
       <div style="background:#090e1a;padding:14px;text-align:center;border-top:1px solid #1e293b;">
-        <p style="margin:0;color:#334155;font-size:12px;">Quecko-HCM · Time Tracking System</p>
+        <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
       </div>
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Quecko-HCM" <${process.env.SMTP_USER}>`,
+      from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      adminEmail,
       subject: `🎂 Birthday Reminder: ${employees.length} birthday${employees.length > 1 ? 's' : ''} tomorrow`,
       html,
@@ -399,15 +399,15 @@ async function sendBirthdayGreetingEmail({ name, email }) {
         <div style="background:#1e293b;border-radius:12px;padding:16px 24px;margin-bottom:24px;">
           <p style="color:#a5b4fc;font-size:16px;font-weight:600;margin:0;">Have a fantastic day! 🎊🎈</p>
         </div>
-        <p style="color:#64748b;font-size:13px;margin:0;">With warm wishes,<br><strong style="color:#f1f5f9;">The Quecko Team</strong></p>
+        <p style="color:#64748b;font-size:13px;margin:0;">With warm wishes,<br><strong style="color:#f1f5f9;">The Tickin Team</strong></p>
       </div>
       <div style="background:#090e1a;padding:14px;text-align:center;border-top:1px solid #1e293b;">
-        <p style="margin:0;color:#334155;font-size:12px;">Quecko-HCM · Time Tracking System</p>
+        <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
       </div>
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Quecko HR" <${process.env.SMTP_USER}>`,
+      from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      email,
       subject: `🎂 Happy Birthday, ${name}! 🎉`,
       html,
@@ -442,15 +442,15 @@ async function sendAnniversaryReminderEmail({ adminEmail, employees }) {
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <p style="color:#475569;font-size:13px;margin:20px 0 0;text-align:center;">Log in to <strong style="color:#6ee7b7;">Quecko-HCM</strong> to celebrate their milestone!</p>
+        <p style="color:#475569;font-size:13px;margin:20px 0 0;text-align:center;">Log in to <strong style="color:#6ee7b7;">Tickin</strong> to celebrate their milestone!</p>
       </div>
       <div style="background:#090e1a;padding:14px;text-align:center;border-top:1px solid #1e293b;">
-        <p style="margin:0;color:#334155;font-size:12px;">Quecko-HCM · Time Tracking System</p>
+        <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
       </div>
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Quecko-HCM" <${process.env.SMTP_USER}>`,
+      from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      adminEmail,
       subject: `🏆 Work Anniversary Reminder: ${employees.length} anniversary${employees.length > 1 ? 's' : ''} tomorrow`,
       html,
@@ -476,15 +476,15 @@ async function sendAnniversaryGreetingEmail({ name, email, years }) {
           <div style="color:#94a3b8;font-size:14px;margin-top:4px;">${years} year${years !== 1 ? 's' : ''} of excellence</div>
         </div>
         <p style="color:#94a3b8;font-size:15px;line-height:1.7;margin:0 0 24px;">Thank you for ${years} year${years !== 1 ? 's' : ''} of dedication and hard work. Your contributions have made a real impact and we're so grateful to have you on the team!</p>
-        <p style="color:#64748b;font-size:13px;margin:0;">With appreciation,<br><strong style="color:#f1f5f9;">The Quecko Team</strong></p>
+        <p style="color:#64748b;font-size:13px;margin:0;">With appreciation,<br><strong style="color:#f1f5f9;">The Tickin Team</strong></p>
       </div>
       <div style="background:#090e1a;padding:14px;text-align:center;border-top:1px solid #1e293b;">
-        <p style="margin:0;color:#334155;font-size:12px;">Quecko-HCM · Time Tracking System</p>
+        <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
       </div>
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Quecko HR" <${process.env.SMTP_USER}>`,
+      from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      email,
       subject: `🏆 Happy ${ordinal} Work Anniversary, ${name}! 🎉`,
       html,

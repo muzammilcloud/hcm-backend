@@ -12,7 +12,7 @@ async function getPool() {
     port:     parseInt(process.env.DB_PORT || '3306'),
     user:     process.env.DB_USER     || process.env.DB_USERNAME || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME     || process.env.DB_DATABASE || 'queckots',
+    database: process.env.DB_NAME     || process.env.DB_DATABASE || 'tickin',
     waitForConnections: true,
     connectionLimit: 5,
   });
@@ -122,7 +122,7 @@ const EMPLOYEES = [
 
 async function run() {
   const pool = await getPool();
-  console.log(`Connecting: ${process.env.DB_USER || process.env.DB_USERNAME || 'root'}@${process.env.DB_HOST || 'localhost'}/${process.env.DB_NAME || process.env.DB_DATABASE || 'queckots'}\n`);
+  console.log(`Connecting: ${process.env.DB_USER || process.env.DB_USERNAME || 'root'}@${process.env.DB_HOST || 'localhost'}/${process.env.DB_NAME || process.env.DB_DATABASE || 'tickin'}\n`);
   let updated = 0, inserted = 0;
 
   for (const e of EMPLOYEES) {

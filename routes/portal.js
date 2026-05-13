@@ -105,7 +105,7 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
       LEFT JOIN employees e ON pu.employee_id = e.id
       WHERE pu.id = ?
     `, [puId]);
-    await logEvent(pool, { employee_name: displayName, department: department||'General', role: role||'Employee', event: 'portal_invited', detail: `HCM invite sent to ${email}` });
+    await logEvent(pool, { employee_name: displayName, department: department||'General', role: role||'Employee', event: 'portal_invited', detail: `Portal invite sent to ${email}` });
 
     res.json({ ...rows[0], email_sent: emailSent });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -171,7 +171,7 @@ router.delete('/portal-users/:id', requireAdmin, async (req, res) => {
       [pu.id]
     );
 
-    await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'portal_revoked', detail: `HCM access revoked for ${pu.email}` });
+    await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'portal_revoked', detail: `Portal access revoked for ${pu.email}` });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

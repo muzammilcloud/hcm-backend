@@ -37,7 +37,7 @@ async function sendWeeklyReports() {
         GROUP BY DATE(clock_in) ORDER BY date ASC
       `, [emp.id]);
       if (rows.length > 0) {
-        await sendReportEmail({ to: emp.email, subject: '📊 Your Weekly Time Report — Quecko-HCM',
+        await sendReportEmail({ to: emp.email, subject: '📊 Your Weekly Time Report — Tickin',
           title: 'Weekly Time Report', subtitle: `${emp.name} · ${emp.department}`,
           columns: [{ key:'date', label:'Date' },{ key:'sessions', label:'Sessions' },{ key:'hours', label:'Hours' }],
           rows });
@@ -53,7 +53,7 @@ async function sendWeeklyReports() {
           AND YEARWEEK(te.clock_in,1)=YEARWEEK(DATE_SUB(NOW(),INTERVAL 7 DAY),1)
         WHERE e.is_active=1 GROUP BY e.id ORDER BY hours DESC
       `);
-      await sendReportEmail({ to: adminEmail, subject: '📊 Weekly Team Report — Quecko-HCM',
+      await sendReportEmail({ to: adminEmail, subject: '📊 Weekly Team Report — Tickin',
         title: 'Weekly Team Report', subtitle: 'All Employees Summary',
         columns: [{ key:'name', label:'Employee' },{ key:'department', label:'Dept' },{ key:'sessions', label:'Sessions' },{ key:'hours', label:'Hours' }],
         rows: summary });
@@ -77,7 +77,7 @@ async function sendMonthlyReports() {
         GROUP BY DATE(clock_in) ORDER BY date ASC
       `, [emp.id]);
       if (rows.length > 0) {
-        await sendReportEmail({ to: emp.email, subject: '📊 Your Monthly Time Report — Quecko-HCM',
+        await sendReportEmail({ to: emp.email, subject: '📊 Your Monthly Time Report — Tickin',
           title: 'Monthly Time Report', subtitle: `${emp.name} · ${emp.department}`,
           columns: [{ key:'date', label:'Date' },{ key:'sessions', label:'Sessions' },{ key:'hours', label:'Hours' }],
           rows });
@@ -93,7 +93,7 @@ async function sendMonthlyReports() {
           AND YEAR(te.clock_in)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH))
         WHERE e.is_active=1 GROUP BY e.id ORDER BY hours DESC
       `);
-      await sendReportEmail({ to: adminEmail, subject: '📊 Monthly Team Report — Quecko-HCM',
+      await sendReportEmail({ to: adminEmail, subject: '📊 Monthly Team Report — Tickin',
         title: 'Monthly Team Report', subtitle: 'All Employees — Previous Month',
         columns: [{ key:'name', label:'Employee' },{ key:'department', label:'Dept' },{ key:'sessions', label:'Sessions' },{ key:'hours', label:'Hours' }],
         rows: summary });

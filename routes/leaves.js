@@ -690,7 +690,7 @@ router.get('/calendar', requireAdmin, async (req, res) => {
     const [pending] = await pool.execute(pendQ, pendParams);
 
     // Time entries: UNION of old Slack entries (time_entries.employee_id = employees.id)
-    // and HCM portal entries (portal_time_entries → portal_users.employee_id = employees.id)
+    // and portal entries (portal_time_entries → portal_users.employee_id = employees.id)
     const tDateFrom = from        ? 'AND DATE(clock_in) >= ?' : '';
     const tDateTo   = to          ? 'AND DATE(clock_in) <= ?' : '';
     const tEmpOld   = employee_id ? 'AND employee_id = ?'     : '';
@@ -759,7 +759,7 @@ router.get('/employee/calendar', requireEmployee, async (req, res) => {
     if (to)   { holQ += ' AND date <= ?'; hParams.push(to); }
     const [holidays] = await pool.execute(holQ, hParams);
 
-    // Daily worked hours — from portal_time_entries (HCM portal clock-ins)
+    // Daily worked hours — from portal_time_entries (portal clock-ins)
     const [dailyHours] = await pool.execute(`
       SELECT DATE(clock_in) as date,
         ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as total_hours,

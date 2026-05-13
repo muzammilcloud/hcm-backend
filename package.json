@@ -1,7 +1,7 @@
 {
-  "name": "queckots-backend",
+  "name": "tickin-backend",
   "version": "1.0.0",
-  "description": "Quecko-HCM Time Tracking API",
+  "description": "Tickin HR Platform API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

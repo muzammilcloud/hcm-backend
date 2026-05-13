@@ -81,7 +81,7 @@ app.use('/api', teamleadRoutes);
 app.use('/api', adjustmentRoutes);
 app.use('/api', notificationRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Quecko-HCM API' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
 
 // 404 + error handler must come last.
 app.use('/api', notFoundHandler);
@@ -97,7 +97,7 @@ const PORT = process.env.PORT || 4000;
 initDB().then(() => {
   scheduleReports();
   startOTChecker();
-  app.listen(PORT, () => console.log(`🚀 Quecko-HCM backend running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
 }).catch(err => {
   console.error('❌ Failed to connect to database:', err.message);
   process.exit(1);

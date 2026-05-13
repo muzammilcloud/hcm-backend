@@ -35,7 +35,7 @@ router.post('/invite/:token/set-password', async (req, res) => {
       [hashPassword(password), pu.id]
     );
 
-    await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'portal_activated', detail: 'HCM portal account activated' });
+    await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'portal_activated', detail: 'Portal account activated' });
 
     const token     = generateToken();
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);

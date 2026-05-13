@@ -160,7 +160,7 @@ async function initDB() {
   try { await pool.execute(`UPDATE portal_users SET portal_role='sys-admin' WHERE email='anoshanoor363@gmail.com'  AND portal_role='employee'`); } catch (_) {}
   try { await pool.execute(`UPDATE portal_users SET portal_role='sys-admin' WHERE email='laibaarshad617@gmail.com' AND portal_role='employee'`); } catch (_) {}
 
-  // Portal users — standalone HCM login accounts, no relation to HR employees table
+  // Portal users — standalone portal login accounts, no relation to HR employees table
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS portal_users (
       id          INT AUTO_INCREMENT PRIMARY KEY,

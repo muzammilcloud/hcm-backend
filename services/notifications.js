@@ -1,6 +1,6 @@
 const { sendSlackDM, getSlackUserIdByEmail } = require('./slack');
 
-const FE_BASE_URL = process.env.FRONTEND_URL?.split(',')[0] || 'https://hcm.quecko.com';
+const FE_BASE_URL = process.env.FRONTEND_URL?.split(',')[0] || 'https://app.tickin.pro';
 
 // ── Slack DM helpers ─────────────────────────────────────────────────────────
 async function dmUser(pool, portalUserId, text, blocks = null) {

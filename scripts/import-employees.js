@@ -1,5 +1,5 @@
 /**
- * Quecko TRS — Employee Import Script
+ * Tickin — Employee Import Script
  * ------------------------------------
  * 1. Wipes all data except admins + admin_sessions + leave_policies
  * 2. Imports real employee records (no invites, no passwords set)
@@ -18,7 +18,7 @@ const pool = mysql.createPool({
   port:     process.env.DB_PORT     || 3306,
   user:     process.env.DB_USER     || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME     || 'queckots',
+  database: process.env.DB_NAME     || 'tickin',
   waitForConnections: true,
   connectionLimit: 10,
 });

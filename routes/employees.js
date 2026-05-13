@@ -101,7 +101,7 @@ router.get('/employees', requireAdmin, async (req, res) => {
     const [rows] = await pool.execute(`
       SELECT e.*,
         CASE WHEN ei.employee_id IS NOT NULL AND e.is_active = 0 THEN 1 ELSE 0 END AS has_pending_invite,
-        pu.status      AS hcm_status,
+        pu.status      AS portal_status,
         pu.id          AS portal_user_id,
         pu.portal_role AS portal_role,
         tl.name     AS reports_to_name,

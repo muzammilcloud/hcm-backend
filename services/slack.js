@@ -58,7 +58,7 @@ async function getEmployeeBySlackId(slackUserId, pool) {
     "SELECT * FROM portal_users WHERE email = ? AND status = 'active'",
     [email]
   );
-  if (rows.length === 0) throw new Error(`No active HCM account found for *${email}*. Ask your admin to send you an invite.`);
+  if (rows.length === 0) throw new Error(`No active portal account found for *${email}*. Ask your admin to send you an invite.`);
   return rows[0];
 }
 

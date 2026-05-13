@@ -32,7 +32,7 @@ router.get('/teamlead/team', requireTeamLead, async (req, res) => {
     const pool = await getDB();
     const [rows] = await pool.execute(
       `SELECT e.id, e.name, e.email, e.role, e.department, e.emp_code, e.join_date AS joining_date,
-              pu.id AS portal_user_id, pu.portal_role, pu.status AS hcm_status
+              pu.id AS portal_user_id, pu.portal_role, pu.status AS portal_status
        FROM employees e
        LEFT JOIN portal_users pu ON e.id = pu.employee_id
        WHERE e.reports_to = ?
