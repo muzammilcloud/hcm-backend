@@ -24,6 +24,18 @@ async function initDB() {
     )
   `);
 
+  // Bootstrap admin row (id=1). Login auth uses ADMIN_USERNAME/ADMIN_PASSWORD
+  // env vars; this row only exists to satisfy admin_sessions.admin_id FK.
+  // INSERT IGNORE so it's idempotent on every boot and never overwrites an
+  // existing row.
+  {
+    const envUser = (process.env.ADMIN_USERNAME || 'admin').trim();
+    await pool.execute(
+      `INSERT IGNORE INTO admins (id, username, password_hash) VALUES (1, ?, ?)`,
+      [envUser, hashPassword(process.env.ADMIN_PASSWORD || 'bootstrap')]
+    );
+  }
+
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS employees (
       id INT AUTO_INCREMENT PRIMARY KEY,
