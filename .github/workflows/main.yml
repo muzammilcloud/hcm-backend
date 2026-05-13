@@ -53,6 +53,7 @@ jobs:
           docker run -d \
             --name "${CONTAINER_NAME}-candidate" \
             --env-file .env \
+            --network tickin \
             "$IMAGE_NAME:new"
 
           echo "=== Wait for healthcheck ==="
@@ -89,6 +90,7 @@ jobs:
           docker run -d \
             --name "$CONTAINER_NAME" \
             --env-file .env \
+            --network tickin \
             -p 4001:4001 \
             "$IMAGE_NAME:new"
           docker rm -f "${CONTAINER_NAME}-candidate" || true
