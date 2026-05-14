@@ -77,6 +77,11 @@ async function migrateAllTenants() {
       } catch (e) {
         console.error(`[migrations]   ${t.slug}: settings seed failed:`, e.message);
       }
+      try {
+        await seedSalaryComponents(pool);
+      } catch (e) {
+        console.error(`[migrations]   ${t.slug}: components seed failed:`, e.message);
+      }
       console.log(`[migrations]   ✓ ${t.slug}`);
     } catch (e) {
       console.error(`[migrations]   ✗ ${t.slug}:`, e.message);
@@ -89,6 +94,17 @@ async function migrateAllTenants() {
 // single-tenant app's original locale (PKR / PK); every other tenant
 // gets USD/US placeholders that the sys-admin sets correctly on first
 // visit to Settings → Workspace.
+async function seedSalaryComponents(pool) {
+  // Every tenant needs at least one "Basic Salary" component — it's the
+  // anchor for percent_of_basic calculations. system_managed=1 so the
+  // sys-admin can't delete it (only rename / reorder).
+  await pool.execute(
+    `INSERT IGNORE INTO salary_components
+       (code, name, kind, calc_method, amount, taxable, show_on_slip, sort_order, system_managed)
+     VALUES ('basic_salary', 'Basic Salary', 'earning', 'fixed', 0, 1, 1, 0, 1)`
+  );
+}
+
 async function seedTenantSettings(pool, tenant) {
   const isLegacyApp = tenant.slug === 'app';
   const defaults = isLegacyApp

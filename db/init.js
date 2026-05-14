@@ -203,6 +203,61 @@ async function initTenantSchema(poolArg) {
     )
   `);
 
+  // ── Salary components ─────────────────────────────────────────────────────
+  // Per-tenant library of earning/deduction lines used by the calculator.
+  //
+  // Method semantics:
+  //   fixed             — value is exactly `amount`
+  //   percent_of_basic  — `percent`% of the employee's basic salary
+  //   percent_of_gross  — `percent`% of total earnings
+  //   percent_of_ctc    — `percent`% of cost-to-company
+  //
+  // `cap_amount` optionally caps a percent-derived value.
+  // `system_managed`=1 components (e.g. Basic Salary) can't be deleted —
+  // they underpin every other calculation.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS salary_components (
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      code          VARCHAR(50) NOT NULL UNIQUE,
+      name          VARCHAR(255) NOT NULL,
+      kind          ENUM('earning','deduction') NOT NULL,
+      calc_method   ENUM('fixed','percent_of_basic','percent_of_gross','percent_of_ctc')
+                    NOT NULL DEFAULT 'fixed',
+      amount        DECIMAL(14,2) DEFAULT NULL,
+      percent       DECIMAL(6,2)  DEFAULT NULL,
+      cap_amount    DECIMAL(14,2) DEFAULT NULL,
+      taxable       TINYINT(1) NOT NULL DEFAULT 0,
+      show_on_slip  TINYINT(1) NOT NULL DEFAULT 1,
+      sort_order    INT NOT NULL DEFAULT 0,
+      system_managed TINYINT(1) NOT NULL DEFAULT 0,
+      active        TINYINT(1) NOT NULL DEFAULT 1,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_components_kind (kind),
+      INDEX idx_components_order (sort_order)
+    ) ENGINE=InnoDB
+  `);
+
+  // Employee-level overrides. The calculator prefers an override row over
+  // the component's defaults when computing this employee's slip.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS employee_component_overrides (
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      employee_id   INT NOT NULL,
+      component_id  INT NOT NULL,
+      calc_method   ENUM('fixed','percent_of_basic','percent_of_gross','percent_of_ctc')
+                    NOT NULL DEFAULT 'fixed',
+      amount        DECIMAL(14,2) DEFAULT NULL,
+      percent       DECIMAL(6,2)  DEFAULT NULL,
+      cap_amount    DECIMAL(14,2) DEFAULT NULL,
+      note          VARCHAR(255) DEFAULT NULL,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_emp_component (employee_id, component_id),
+      FOREIGN KEY (component_id) REFERENCES salary_components(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB
+  `);
+
   // ── Tenant settings ──────────────────────────────────────────────────────
   // Singleton row per tenant DB (enforced via UNIQUE on singleton_key).
   // Holds locale (currency, country) and slip-branding for the workspace.
