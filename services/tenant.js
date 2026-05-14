@@ -184,11 +184,42 @@ async function provisionTenant({
     const inviteToken   = generateToken();
     const inviteExpiry  = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days, matches existing invite convention
     const placeholderPw = hashPassword(generateToken());  // throwaway; gets replaced on activation
+    const displayName   = adminName || contactEmail.split('@')[0];
+
+    // 4a. Also seed a matching employees row so the admin appears in every
+    //     people-picker (Reports To selector, Reports page filters, etc.).
+    //     The admin can re-categorize / rename later; this just makes the
+    //     dropdowns useful from day one.
+    let employeeId = null;
+    try {
+      const [empIns] = await tenantPool.execute(
+        `INSERT INTO employees (name, email, role, department, is_active, employment_status)
+         VALUES (?, ?, 'Admin', 'Management', 1, 'permanent')
+         ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+        [displayName, contactEmail]
+      );
+      employeeId = empIns.insertId || null;
+      if (!employeeId) {
+        // Already existed (ON DUPLICATE KEY) — look it up
+        const [rows] = await tenantPool.execute(
+          `SELECT id FROM employees WHERE email = ? LIMIT 1`,
+          [contactEmail]
+        );
+        employeeId = rows[0]?.id || null;
+      }
+    } catch (e) {
+      console.warn('[provisionTenant] failed to seed employees row:', e.message);
+    }
+
     await tenantPool.execute(
-      `INSERT INTO portal_users (email, name, password_hash, portal_role, status, invite_token, invite_expires_at)
-       VALUES (?, ?, ?, 'sys-admin', 'pending', ?, ?)
-       ON DUPLICATE KEY UPDATE invite_token = VALUES(invite_token), invite_expires_at = VALUES(invite_expires_at), status = 'pending'`,
-      [contactEmail, adminName || contactEmail.split('@')[0], placeholderPw, inviteToken, inviteExpiry]
+      `INSERT INTO portal_users (email, name, password_hash, portal_role, status, invite_token, invite_expires_at, employee_id)
+       VALUES (?, ?, ?, 'sys-admin', 'pending', ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         invite_token = VALUES(invite_token),
+         invite_expires_at = VALUES(invite_expires_at),
+         status = 'pending',
+         employee_id = COALESCE(employee_id, VALUES(employee_id))`,
+      [contactEmail, displayName, placeholderPw, inviteToken, inviteExpiry, employeeId]
     );
 
     // 5. Flip tenant to active
