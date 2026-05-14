@@ -4,6 +4,16 @@ const { getDB, generateToken, logEvent } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { sendInviteEmail } = require('../services/email');
 
+// Build the set-password URL for an invite, scoped to the current tenant.
+// Without this, sendInviteEmail falls back to process.env.FRONTEND_URL
+// (or localhost in dev) — wrong for multi-tenant invites.
+const APEX_DOMAIN = (process.env.APEX_DOMAIN || 'tickin.pro').trim();
+function tenantInviteUrl(req, token) {
+  const slug = req.tenant?.slug;
+  if (!slug) return null;   // platform-level call — let email service default
+  return `https://${slug}.${APEX_DOMAIN}/set-password?token=${token}`;
+}
+
 // GET /api/portal-users
 router.get('/portal-users', requireAdmin, async (req, res) => {
   try {
@@ -99,7 +109,11 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
       await pool.execute(`UPDATE employees SET slack_email = ? WHERE id = ?`, [email, employee_id]);
     }
 
-    const emailSent = await sendInviteEmail({ name: displayName, email, inviteToken });
+    const inviteUrl = tenantInviteUrl(req, inviteToken);
+    const emailSent = await sendInviteEmail({
+      name: displayName, email, inviteToken, inviteUrl,
+      companyName: req.tenant?.company_name,
+    });
     const [rows] = await pool.execute(`
       SELECT pu.*, e.emp_code FROM portal_users pu
       LEFT JOIN employees e ON pu.employee_id = e.id
@@ -152,7 +166,11 @@ router.post('/portal-users/:id/resend', requireAdmin, async (req, res) => {
       [inviteToken, inviteExpiry, pu.id]
     );
 
-    const emailSent = await sendInviteEmail({ name: pu.name, email: pu.email, inviteToken });
+    const inviteUrl = tenantInviteUrl(req, inviteToken);
+    const emailSent = await sendInviteEmail({
+      name: pu.name, email: pu.email, inviteToken, inviteUrl,
+      companyName: req.tenant?.company_name,
+    });
     res.json({ success: true, email_sent: emailSent });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
