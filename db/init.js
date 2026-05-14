@@ -175,23 +175,29 @@ async function initTenantSchema(poolArg) {
   try { await pool.execute(`UPDATE portal_users SET portal_role='sys-admin' WHERE email='anoshanoor363@gmail.com'  AND portal_role='employee'`); } catch (_) {}
   try { await pool.execute(`UPDATE portal_users SET portal_role='sys-admin' WHERE email='laibaarshad617@gmail.com' AND portal_role='employee'`); } catch (_) {}
 
-  // Portal users — standalone portal login accounts, no relation to HR employees table
+  // Portal users — standalone portal login accounts, no relation to HR employees table.
+  // The schema below is the full target — historically some columns were added
+  // via ALTER TABLE statements above (which run before CREATE TABLE in this file,
+  // so they're no-ops on a fresh DB). For multi-tenant the column list here must
+  // be complete on its own.
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS portal_users (
-      id          INT AUTO_INCREMENT PRIMARY KEY,
-      name        VARCHAR(255) NOT NULL,
-      first_name  VARCHAR(100),
-      last_name   VARCHAR(100),
-      email       VARCHAR(255) NOT NULL UNIQUE,
-      department  VARCHAR(100) DEFAULT 'General',
-      role        VARCHAR(100) DEFAULT 'Employee',
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      name          VARCHAR(255) NOT NULL,
+      first_name    VARCHAR(100),
+      last_name     VARCHAR(100),
+      email         VARCHAR(255) NOT NULL UNIQUE,
+      department    VARCHAR(100) DEFAULT 'General',
+      role          VARCHAR(100) DEFAULT 'Employee',
+      portal_role   ENUM('employee','team-lead','sys-admin') DEFAULT 'employee',
       password_hash VARCHAR(255),
-      status      ENUM('pending','active','inactive') DEFAULT 'pending',
+      status        ENUM('pending','active','inactive') DEFAULT 'pending',
       invite_token      VARCHAR(255),
       invite_expires_at DATETIME,
       reset_token       VARCHAR(255),
       reset_expires_at  DATETIME,
       slack_user_id VARCHAR(50),
+      employee_id   INT DEFAULT NULL,
       revoked_at  DATETIME,
       created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
