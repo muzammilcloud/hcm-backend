@@ -204,16 +204,15 @@ async function provisionTenant({
       setPasswordUrl: `https://${slug}.tickin.pro/set-password?token=${inviteToken}`,
     };
   } catch (err) {
-    // Roll back: mark tenant deleted, attempt to drop the DB. We keep the row
-    // for audit instead of hard-deleting it.
-    try {
-      await platform.execute(
-        `UPDATE tenants SET status = 'deleted', deleted_at = NOW() WHERE id = ?`,
-        [tenantId]
-      );
-    } catch (_) {}
+    // Roll back atomically: drop the half-provisioned DB AND hard-delete the
+    // tenants row. The slug + db_name UNIQUE constraints would otherwise
+    // block retrying the same name. Audit trail of failed attempts lives in
+    // tenant_signups (status='failed', error=<msg>), not in tenants.
     try {
       await getServerDB().execute(`DROP DATABASE IF EXISTS \`${dbName}\``);
+    } catch (_) {}
+    try {
+      await platform.execute(`DELETE FROM tenants WHERE id = ?`, [tenantId]);
     } catch (_) {}
     throw err;
   }
