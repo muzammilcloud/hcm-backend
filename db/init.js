@@ -1,8 +1,11 @@
 const { getDB, hashPassword } = require('../db');
 const { seedDummyData } = require('./seed');
 
-async function initDB() {
-  const pool = await getDB();
+// Run the full tenant-schema initialization against a specific pool.
+// In multi-tenant mode, called once per tenant by the provisioning service.
+// Without a pool argument it falls back to getDB() so legacy callers still work.
+async function initTenantSchema(poolArg) {
+  const pool = poolArg || await getDB();
 
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -532,4 +535,5 @@ async function initDB() {
   }
 }
 
-module.exports = { initDB };
+// Backwards-compat alias — older code imports `initDB`.
+module.exports = { initTenantSchema, initDB: initTenantSchema };

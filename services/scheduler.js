@@ -294,13 +294,62 @@ function scheduleReports() {
     // Birthdays: every day at 8 AM
     if (hour === 8 && min < 30) await checkBirthdays();
     // Daily leave & WFH report: fires after 12:00 PKT (Asia/Karachi), once per day.
-    // Pinned to PKT so the trigger reflects noon Pakistan time regardless of server clock.
-    // First 30-min tick at or after noon wins; firedToday guards against re-fire.
     const pkt = nowIn('Asia/Karachi');
     if (pkt.hour >= 12 && pkt.hour < 24 && !firedToday('dailyLeaveReport', 'Asia/Karachi')) {
       await sendDailyLeaveReport();
     }
+    // Tenant lifecycle: expire trials, hard-delete tenants past the grace
+    // window. Runs once per day at 3 AM (server local). Skipped if PLATFORM_DB
+    // isn't initialized.
+    if (hour === 3 && min < 30 && !firedToday('tenantLifecycle', 'UTC')) {
+      await runTenantLifecycle();
+    }
   }, 30 * 60 * 1000);
 }
 
-module.exports = { sendWeeklyReports, sendMonthlyReports, sendMonthlySalarySlips, sendDailyLeaveReport, scheduleReports };
+// ─── Tenant lifecycle ────────────────────────────────────────────────────────
+// Demo plan: 7-day trial.  After trial_ends_at:
+//   - mark 'expired' (login still works for 7 more days, read-only ideally)
+//   - 7 days later (14 days post-signup): hard-delete tenant DB
+async function runTenantLifecycle() {
+  try {
+    const { getPlatformDB } = require('../db');
+    const { deleteTenant, audit } = require('./tenant');
+    const platform = getPlatformDB();
+
+    // 1. Demo trials that ended → mark expired
+    const [expiring] = await platform.execute(`
+      SELECT id, slug FROM tenants
+      WHERE status = 'active' AND plan = 'demo'
+        AND trial_ends_at IS NOT NULL
+        AND trial_ends_at <= NOW()
+    `);
+    for (const t of expiring) {
+      await platform.execute(`UPDATE tenants SET status = 'expired' WHERE id = ?`, [t.id]);
+      audit({ actorType: 'system', tenantId: t.id, action: 'tenant.expire', detail: { slug: t.slug } });
+      console.log(`⏳ Tenant ${t.slug} expired (demo trial ended).`);
+    }
+
+    // 2. Expired tenants past grace window → hard delete
+    const graceDays = Number(process.env.DEMO_GRACE_DAYS) || 7;
+    const [toDelete] = await platform.execute(`
+      SELECT id, slug FROM tenants
+      WHERE status = 'expired' AND plan = 'demo'
+        AND trial_ends_at IS NOT NULL
+        AND trial_ends_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+    `, [graceDays]);
+    for (const t of toDelete) {
+      try {
+        await deleteTenant(t.id);
+        audit({ actorType: 'system', tenantId: t.id, action: 'tenant.auto_delete', detail: { slug: t.slug } });
+        console.log(`🗑  Tenant ${t.slug} auto-deleted (grace window expired).`);
+      } catch (e) {
+        console.error(`Failed to delete tenant ${t.slug}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('runTenantLifecycle failed:', e.message);
+  }
+}
+
+module.exports = { sendWeeklyReports, sendMonthlyReports, sendMonthlySalarySlips, sendDailyLeaveReport, scheduleReports, runTenantLifecycle };

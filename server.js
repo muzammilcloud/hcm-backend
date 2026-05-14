@@ -6,12 +6,14 @@ require('dotenv').config();
 const { validateEnv } = require('./config/env');
 validateEnv();
 
-const { initDB }         = require('./db/init');
-const { startOTChecker } = require('./services/slack');
-const { scheduleReports } = require('./services/scheduler');
+const { initPlatformDB }    = require('./db/platform-init');
+const { startOTChecker }    = require('./services/slack');
+const { scheduleReports }   = require('./services/scheduler');
+const { tenantMiddleware }  = require('./middleware/tenant');
 const { authLimiter, passwordResetLimiter } = require('./middleware/rateLimit');
-const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const { errorHandler, notFoundHandler }     = require('./middleware/errorHandler');
 
+// Tenant-scoped routes (each runs against req.tenant's DB via getDB)
 const authRoutes      = require('./routes/auth');
 const employeeRoutes  = require('./routes/employees');
 const empAuthRoutes   = require('./routes/employee.auth');
@@ -25,45 +27,61 @@ const otRoutes          = require('./routes/ot');
 const resignationRoutes = require('./routes/resignation');
 const birthdayRoutes    = require('./routes/birthdays');
 const portalRoutes      = require('./routes/portal');
-const teamleadRoutes      = require('./routes/teamlead');
-const adjustmentRoutes    = require('./routes/adjustments');
-const notificationRoutes  = require('./routes/notifications');
+const teamleadRoutes    = require('./routes/teamlead');
+const adjustmentRoutes  = require('./routes/adjustments');
+const notificationRoutes = require('./routes/notifications');
+
+// Platform-scoped routes (run against the platform DB)
+const signupRoutes      = require('./routes/signup');
+const platformRoutes    = require('./routes/platform');
 
 const app = express();
 
-// Trust the first reverse proxy hop (PM2 / nginx / load balancer) so
-// req.ip and rate-limit keys reflect the real client, not the proxy.
 app.set('trust proxy', 1);
 
-// ── Security headers ───────────────────────────────────────────────────────
-// helmet sets sensible defaults: X-Content-Type-Options, X-Frame-Options,
-// Referrer-Policy, etc. CSP is not enabled here — it would need to be
-// designed alongside the FE bundle/CDN.
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // ── CORS ───────────────────────────────────────────────────────────────────
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',');
+// Multi-tenant: accept any subdomain of APEX_DOMAIN (default tickin.pro) plus
+// explicit overrides from FRONTEND_URL.
+const explicitOrigins = (process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+const APEX_DOMAIN = process.env.APEX_DOMAIN || 'tickin.pro';
+const apexSubdomainRe = new RegExp(`^https?://([a-z0-9-]+\\.)?${APEX_DOMAIN.replace(/\./g, '\\.')}(:\\d+)?$`, 'i');
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) cb(null, true);
-    else cb(new Error('Not allowed by CORS'));
-  }
+    if (!origin) return cb(null, true);
+    if (explicitOrigins.length && explicitOrigins.includes(origin)) return cb(null, true);
+    if (apexSubdomainRe.test(origin)) return cb(null, true);
+    if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  exposedHeaders: ['X-Tenant'],
 }));
 app.use(express.json());
 
-// ── Slack — parse slash command bodies (application/x-www-form-urlencoded) ──
+// Slack — parse slash command bodies
 app.use('/api/slack', express.urlencoded({ extended: true }));
 
-// ── Rate limits on sensitive auth endpoints ────────────────────────────────
-// Mounted before the routes that own these paths so the limiter runs first.
+// Rate limits
 app.use('/api/login',                     authLimiter);
 app.use('/api/login/unified',             authLimiter);
 app.use('/api/employee/login',            authLimiter);
 app.use('/api/employee/forgot-password',  passwordResetLimiter);
 app.use('/api/employee/reset-password',   authLimiter);
 app.use('/api/invite',                    authLimiter);
+app.use('/api/signup',                    authLimiter);
+app.use('/api/platform/login',            authLimiter);
 
-// ── Routes ─────────────────────────────────────────────────────────────────
+// Resolve the tenant for every non-platform request. Platform paths
+// (/api/platform/*, /api/signup, /api/slug-*, /api/tenant/*, /health)
+// skip this and run against the platform DB.
+app.use(tenantMiddleware);
+
+// Platform (control-plane) routes
+app.use('/api', signupRoutes);
+app.use('/api', platformRoutes);
+
+// Tenant-scoped routes
 app.use('/api', authRoutes);
 app.use('/api', employeeRoutes);
 app.use('/api', empAuthRoutes);
@@ -83,22 +101,19 @@ app.use('/api', notificationRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
 
-// 404 + error handler must come last.
 app.use('/api', notFoundHandler);
 app.use(errorHandler);
 
-// Don't let an unhandled rejection crash the process silently.
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
 });
 
-// ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
-initDB().then(() => {
+initPlatformDB().then(() => {
   scheduleReports();
   startOTChecker();
   app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
 }).catch(err => {
-  console.error('❌ Failed to connect to database:', err.message);
+  console.error('❌ Failed to initialize platform DB:', err.message);
   process.exit(1);
 });

@@ -10,9 +10,11 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-async function sendInviteEmail({ name, email, inviteToken }) {
+async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: providedUrl, companyName }) {
+  const recipient = email || to;
   const baseUrl   = process.env.FRONTEND_URL || 'http://localhost:5173';
-  const inviteUrl = `${baseUrl}/set-password?token=${inviteToken}`;
+  const inviteUrl = providedUrl || `${baseUrl}/set-password?token=${inviteToken}`;
+  email = recipient;  // keep older template references working below
   const html = `
     <!DOCTYPE html>
     <html>
@@ -47,8 +49,10 @@ async function sendInviteEmail({ name, email, inviteToken }) {
   try {
     await transporter.sendMail({
       from:    `"Tickin" <${process.env.SMTP_USER}>`,
-      to:      email,
-      subject: '🎉 You\'re invited to Tickin — Set your password',
+      to:      recipient,
+      subject: companyName
+        ? `🎉 You're invited to ${companyName} on Tickin — Set your password`
+        : '🎉 You\'re invited to Tickin — Set your password',
       html,
     });
     console.log(`✅ Invite email sent to ${email}`);
