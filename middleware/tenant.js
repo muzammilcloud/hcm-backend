@@ -1,5 +1,5 @@
 const { tenantContext, getTenantDB } = require('../db');
-const { getTenantBySlug, isReservedSlug } = require('../services/tenant');
+const { getTenantBySlug, isPlatformSubdomain } = require('../services/tenant');
 
 // Routes that operate on the platform DB only (signup, platform admin, health).
 // Anything matching these prefixes skips tenant resolution.
@@ -55,10 +55,11 @@ async function tenantMiddleware(req, res, next) {
 
   const slug = resolveSlug(req);
 
-  // No subdomain at all (e.g., hitting api.tickin.pro/api/login without
-  // an X-Tenant header) — let it through; routes that require a tenant
-  // should call ensureTenant() themselves.
-  if (!slug || isReservedSlug(slug)) return next();
+  // No subdomain, or a platform subdomain (api/www/admin/...) — let it through.
+  // Routes that require a tenant should call ensureTenant() themselves.
+  // NOTE: do not check the broader RESERVED_SUBDOMAINS here — names like 'app'
+  // are reserved-against-signup but ARE real tenants that need to resolve.
+  if (!slug || isPlatformSubdomain(slug)) return next();
 
   const tenant = await getTenantBySlug(slug);
   if (!tenant) {

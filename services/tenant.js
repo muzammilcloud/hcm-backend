@@ -10,7 +10,11 @@ const {
 const { initTenantSchema } = require('../db/init');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reserved subdomains — these cannot be claimed by signups
+// Reserved subdomains — these cannot be claimed by signups.
+//
+// Note: 'app' is here (no new tenant can claim it) but the migration script
+// inserts a row for it in `tenants` — so middleware can still resolve it as
+// a real tenant. Same model applies to any future "house" tenant.
 // ─────────────────────────────────────────────────────────────────────────────
 const RESERVED_SUBDOMAINS = new Set([
   // platform
@@ -25,6 +29,21 @@ const RESERVED_SUBDOMAINS = new Set([
   // brand protection
   'tickin', 'official', 'team', 'no-reply', 'noreply', 'system',
 ]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Platform subdomains — these never resolve to a tenant. Tenant middleware
+// skips lookup for these and lets requests fall through to the platform DB.
+// Much shorter than the reserved list: `app` is NOT here because it IS a
+// tenant (created by the migration).
+// ─────────────────────────────────────────────────────────────────────────────
+const PLATFORM_SUBDOMAINS = new Set([
+  'www', 'api', 'admin', 'mail', 'cdn', 'static', 'assets',
+  'ftp', 'sftp', 'smtp', 'ns', 'ns1', 'ns2', 'mx', 'webmail', 'email',
+]);
+
+function isPlatformSubdomain(slug) {
+  return typeof slug === 'string' && PLATFORM_SUBDOMAINS.has(slug);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Slug helpers
@@ -263,7 +282,8 @@ async function audit({ actorType, actorId, tenantId, action, detail, ip }) {
 module.exports = {
   // slug
   slugify, isValidSlug, isReservedSlug, isSlugAvailable, findFreeSlug,
-  RESERVED_SUBDOMAINS,
+  isPlatformSubdomain,
+  RESERVED_SUBDOMAINS, PLATFORM_SUBDOMAINS,
 
   // lookup
   getTenantBySlug, getTenantById, listTenants,
