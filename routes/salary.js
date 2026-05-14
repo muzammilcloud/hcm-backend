@@ -116,6 +116,16 @@ router.post('/salaries/:employeeId/generate/:month', requireAdmin, async (req, r
     const breakdown = calculateSalaryBreakdown(salary[0], 30, days_worked);
     const data = breakdown.proRata;
 
+    // Phase A/D: once the first real slip is generated, lock the workspace
+    // currency. Switching currencies after this point would break historical
+    // slips, so changes from here on require an explicit payroll-history
+    // reset (settings page surfaces the locked state).
+    try {
+      await pool.execute(
+        `UPDATE tenant_settings SET currency_locked = 1 WHERE singleton_key = 1 AND currency_locked = 0`
+      );
+    } catch (_) { /* table may not exist in legacy single-tenant DB — ignore */ }
+
     await pool.execute(`
       INSERT INTO salary_history
       (employee_id, month, basic_salary, house_rent, conveyance, medical, utilities,
