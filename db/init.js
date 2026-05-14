@@ -258,6 +258,41 @@ async function initTenantSchema(poolArg) {
     ) ENGINE=InnoDB
   `);
 
+  // ── Tax brackets ─────────────────────────────────────────────────────────
+  // Progressive income tax bands for the workspace. The calculator (Phase D)
+  // computes tax on the sum of all components flagged taxable=1.
+  //
+  // band_to NULL means "and above" — the final, open-ended band.
+  // source_country tracks which preset (if any) the brackets came from, so
+  // the UI can warn before overwriting with a new preset.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS tax_brackets (
+      id         INT AUTO_INCREMENT PRIMARY KEY,
+      band_from  DECIMAL(14,2) NOT NULL,
+      band_to    DECIMAL(14,2) DEFAULT NULL,
+      rate       DECIMAL(5,2)  NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_brackets_order (sort_order)
+    ) ENGINE=InnoDB
+  `);
+
+  // Metadata about how the current brackets were loaded — surfaces in the UI
+  // banner ("Loaded from Pakistan preset · last updated 3 days ago").
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS tax_bracket_meta (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      singleton_key TINYINT NOT NULL DEFAULT 1 UNIQUE,
+      source_country VARCHAR(2) DEFAULT NULL,
+      preset_year    VARCHAR(10) DEFAULT NULL,
+      confirmed      TINYINT(1) NOT NULL DEFAULT 0,
+      confirmed_at   DATETIME DEFAULT NULL,
+      created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
   // ── Tenant settings ──────────────────────────────────────────────────────
   // Singleton row per tenant DB (enforced via UNIQUE on singleton_key).
   // Holds locale (currency, country) and slip-branding for the workspace.

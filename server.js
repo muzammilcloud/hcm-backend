@@ -39,6 +39,7 @@ const platformRoutes    = require('./routes/platform');
 // Tenant-scoped settings (workspace + locale picker)
 const settingsRoutes    = require('./routes/settings');
 const salaryComponentsRoutes = require('./routes/salaryComponents');
+const salaryTaxRoutes        = require('./routes/salaryTax');
 
 const app = express();
 
@@ -105,6 +106,7 @@ app.use('/api', adjustmentRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', settingsRoutes);
 app.use('/api', salaryComponentsRoutes);
+app.use('/api', salaryTaxRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
 
