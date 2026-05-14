@@ -24,7 +24,7 @@ const shiftsRoutes    = require('./routes/shifts');
 const reportsRoutes   = require('./routes/reports');
 const slackRoutes     = require('./routes/slack');
 const otRoutes          = require('./routes/ot');
-const resignationRoutes = require('./routes/resignation');
+// const resignationRoutes = require('./routes/resignation');  // disabled — uncomment to re-enable
 const birthdayRoutes    = require('./routes/birthdays');
 const portalRoutes      = require('./routes/portal');
 const teamleadRoutes    = require('./routes/teamlead');
@@ -92,7 +92,7 @@ app.use('/api', shiftsRoutes);
 app.use('/api', reportsRoutes);
 app.use('/api/slack', slackRoutes);
 app.use('/api', otRoutes);
-app.use('/api', resignationRoutes);
+// app.use('/api', resignationRoutes);  // disabled — uncomment to re-enable
 app.use('/api', birthdayRoutes);
 app.use('/api', portalRoutes);
 app.use('/api', teamleadRoutes);
