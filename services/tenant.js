@@ -179,13 +179,16 @@ async function provisionTenant({
 
     // 4. Seed an admin in portal_users for this tenant. The user will receive
     //    an invite email and set their password via /set-password?token=...
+    //    invite_expires_at must be set — the activation route checks
+    //    "invite_expires_at > NOW()" and treats NULL as expired.
     const inviteToken   = generateToken();
+    const inviteExpiry  = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days, matches existing invite convention
     const placeholderPw = hashPassword(generateToken());  // throwaway; gets replaced on activation
     await tenantPool.execute(
-      `INSERT INTO portal_users (email, name, password_hash, portal_role, status, invite_token)
-       VALUES (?, ?, ?, 'sys-admin', 'pending', ?)
-       ON DUPLICATE KEY UPDATE invite_token = VALUES(invite_token), status = 'pending'`,
-      [contactEmail, adminName || contactEmail.split('@')[0], placeholderPw, inviteToken]
+      `INSERT INTO portal_users (email, name, password_hash, portal_role, status, invite_token, invite_expires_at)
+       VALUES (?, ?, ?, 'sys-admin', 'pending', ?, ?)
+       ON DUPLICATE KEY UPDATE invite_token = VALUES(invite_token), invite_expires_at = VALUES(invite_expires_at), status = 'pending'`,
+      [contactEmail, adminName || contactEmail.split('@')[0], placeholderPw, inviteToken, inviteExpiry]
     );
 
     // 5. Flip tenant to active
