@@ -7,6 +7,7 @@ const { validateEnv } = require('./config/env');
 validateEnv();
 
 const { initPlatformDB }    = require('./db/platform-init');
+const { migrateAllTenants } = require('./services/migrations');
 const { startOTChecker }    = require('./services/slack');
 const { scheduleReports }   = require('./services/scheduler');
 const { tenantMiddleware }  = require('./middleware/tenant');
@@ -109,11 +110,14 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const PORT = process.env.PORT || 4000;
-initPlatformDB().then(() => {
-  scheduleReports();
-  startOTChecker();
-  app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
-}).catch(err => {
-  console.error('❌ Failed to initialize platform DB:', err.message);
-  process.exit(1);
-});
+initPlatformDB()
+  .then(() => migrateAllTenants())
+  .then(() => {
+    scheduleReports();
+    startOTChecker();
+    app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
+  })
+  .catch(err => {
+    console.error('❌ Failed to initialize platform DB:', err.message);
+    process.exit(1);
+  });
