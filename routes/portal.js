@@ -160,6 +160,13 @@ router.post('/portal-users/:id/resend', requireAdmin, async (req, res) => {
 // DELETE /api/portal-users/:id — revoke access
 router.delete('/portal-users/:id', requireAdmin, async (req, res) => {
   try {
+    // Guard: a sys-admin must not revoke their own access. Without this, an
+    // admin who's the sole sys-admin on the tenant can lock themselves out
+    // permanently. Frontend hides the button; this is the belt-and-braces.
+    if (req.portalUserId && Number(req.portalUserId) === Number(req.params.id)) {
+      return res.status(400).json({ error: "You can't revoke your own portal access. Ask another admin." });
+    }
+
     const pool = await getDB();
     const [rows] = await pool.execute('SELECT * FROM portal_users WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Portal user not found' });
