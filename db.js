@@ -19,13 +19,21 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 
 const tenantContext = new AsyncLocalStorage();
 
-const PLATFORM_DB_NAME = process.env.PLATFORM_DB_NAME || 'tickin_platform';
-const TENANT_DB_PREFIX = process.env.TENANT_DB_PREFIX || 'tickin_';
+// Trim env values defensively — stray whitespace from copy-pasted .env files
+// would otherwise show up as 'tickin_platform  ' and fail with "Incorrect
+// database name".
+const envStr = (key, fallback) => {
+  const v = process.env[key];
+  return (typeof v === 'string' ? v.trim() : v) || fallback;
+};
+
+const PLATFORM_DB_NAME = envStr('PLATFORM_DB_NAME', 'tickin_platform');
+const TENANT_DB_PREFIX = envStr('TENANT_DB_PREFIX', 'tickin_');
 
 const baseConnConfig = () => ({
-  host:     process.env.DB_HOST     || 'localhost',
-  port:     Number(process.env.DB_PORT) || 3306,
-  user:     process.env.DB_USER     || 'root',
+  host:     envStr('DB_HOST', 'localhost'),
+  port:     Number(envStr('DB_PORT', '3306')),
+  user:     envStr('DB_USER', 'root'),
   password: process.env.DB_PASSWORD || '',
   waitForConnections: true,
   connectionLimit: 10,
