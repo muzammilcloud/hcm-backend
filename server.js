@@ -36,6 +36,9 @@ const notificationRoutes = require('./routes/notifications');
 const signupRoutes      = require('./routes/signup');
 const platformRoutes    = require('./routes/platform');
 
+// Tenant-scoped settings (workspace + locale picker)
+const settingsRoutes    = require('./routes/settings');
+
 const app = express();
 
 app.set('trust proxy', 1);
@@ -99,6 +102,7 @@ app.use('/api', portalRoutes);
 app.use('/api', teamleadRoutes);
 app.use('/api', adjustmentRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', settingsRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
 

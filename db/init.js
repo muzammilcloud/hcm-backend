@@ -203,6 +203,31 @@ async function initTenantSchema(poolArg) {
     )
   `);
 
+  // ── Tenant settings ──────────────────────────────────────────────────────
+  // Singleton row per tenant DB (enforced via UNIQUE on singleton_key).
+  // Holds locale (currency, country) and slip-branding for the workspace.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS tenant_settings (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      singleton_key TINYINT NOT NULL DEFAULT 1 UNIQUE,
+
+      currency             VARCHAR(8)   DEFAULT 'USD',
+      currency_locked      TINYINT(1)   DEFAULT 0,
+      country_code         VARCHAR(2)   DEFAULT 'US',
+
+      company_name         VARCHAR(255),
+      company_address      TEXT,
+      company_logo_url     VARCHAR(500),
+
+      slip_title           VARCHAR(64)  DEFAULT 'Salary Slip',
+      slip_signatory_name  VARCHAR(255),
+      slip_signatory_title VARCHAR(100),
+
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
   // Portal sessions — separate from employee_sessions
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS portal_sessions (

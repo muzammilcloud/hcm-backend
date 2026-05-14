@@ -51,7 +51,7 @@ const BACKFILLS = [
 async function migrateAllTenants() {
   const platform = getPlatformDB();
   const [tenants] = await platform.execute(
-    `SELECT id, slug, db_name FROM tenants WHERE status IN ('active', 'suspended', 'expired')`
+    `SELECT id, slug, db_name, company_name FROM tenants WHERE status IN ('active', 'suspended', 'expired')`
   );
 
   if (tenants.length === 0) {
@@ -72,11 +72,35 @@ async function migrateAllTenants() {
           console.error(`[migrations]   ${t.slug}: backfill "${m.name}" failed:`, e.message);
         }
       }
+      try {
+        await seedTenantSettings(pool, t);
+      } catch (e) {
+        console.error(`[migrations]   ${t.slug}: settings seed failed:`, e.message);
+      }
       console.log(`[migrations]   ✓ ${t.slug}`);
     } catch (e) {
       console.error(`[migrations]   ✗ ${t.slug}:`, e.message);
     }
   }
+}
+
+// Singleton row per tenant DB. INSERT IGNORE so re-runs don't overwrite
+// edits the sys-admin already made. The 'app' tenant inherits the
+// single-tenant app's original locale (PKR / PK); every other tenant
+// gets USD/US placeholders that the sys-admin sets correctly on first
+// visit to Settings → Workspace.
+async function seedTenantSettings(pool, tenant) {
+  const isLegacyApp = tenant.slug === 'app';
+  const defaults = isLegacyApp
+    ? { currency: 'PKR', country_code: 'PK' }
+    : { currency: 'USD', country_code: 'US' };
+
+  await pool.execute(
+    `INSERT IGNORE INTO tenant_settings
+       (singleton_key, currency, country_code, company_name, slip_title)
+     VALUES (1, ?, ?, ?, 'Salary Slip')`,
+    [defaults.currency, defaults.country_code, tenant.company_name || null]
+  );
 }
 
 module.exports = { migrateAllTenants };
