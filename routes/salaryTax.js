@@ -88,6 +88,7 @@ router.get('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
         preset_year:    meta.preset_year,
         confirmed:      !!meta.confirmed,
         confirmed_at:   meta.confirmed_at,
+        tax_enabled:    meta.tax_enabled == null ? true : !!meta.tax_enabled,
         updated_at:     meta.updated_at,
       } : null,
     });
@@ -97,7 +98,7 @@ router.get('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
 // PUT /api/salary/tax/brackets — replace all brackets atomically
 router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
   try {
-    const { brackets, source_country = null, preset_year = null, confirmed = true } = req.body || {};
+    const { brackets, source_country = null, preset_year = null, confirmed = true, tax_enabled } = req.body || {};
     const errors = validateBrackets(brackets);
     if (errors.length) return res.status(400).json({ error: 'Invalid brackets', details: errors });
 
@@ -112,19 +113,35 @@ router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
       );
     }
     await pool.execute(
-      `INSERT INTO tax_bracket_meta (singleton_key, source_country, preset_year, confirmed, confirmed_at)
-       VALUES (1, ?, ?, ?, ?)
+      `INSERT INTO tax_bracket_meta (singleton_key, source_country, preset_year, confirmed, confirmed_at, tax_enabled)
+       VALUES (1, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          source_country = VALUES(source_country),
          preset_year    = VALUES(preset_year),
          confirmed      = VALUES(confirmed),
-         confirmed_at   = VALUES(confirmed_at)`,
-      [source_country, preset_year, confirmed ? 1 : 0, confirmed ? new Date() : null]
+         confirmed_at   = VALUES(confirmed_at),
+         tax_enabled    = COALESCE(VALUES(tax_enabled), tax_enabled)`,
+      [source_country, preset_year, confirmed ? 1 : 0, confirmed ? new Date() : null,
+       tax_enabled == null ? null : (tax_enabled ? 1 : 0)]
     );
 
     const rows = await readBrackets(pool);
     const meta = await readMeta(pool);
     res.json({ brackets: rows, meta });
+  } catch (e) { next(e); }
+});
+
+// PUT /api/salary/tax/enabled — quick on/off toggle, doesn't touch brackets
+router.put('/salary/tax/enabled', requireAdmin, async (req, res, next) => {
+  try {
+    const enabled = req.body?.enabled ? 1 : 0;
+    const pool = await getDB();
+    await pool.execute(
+      `INSERT INTO tax_bracket_meta (singleton_key, tax_enabled) VALUES (1, ?)
+       ON DUPLICATE KEY UPDATE tax_enabled = VALUES(tax_enabled)`,
+      [enabled]
+    );
+    res.json({ tax_enabled: !!enabled });
   } catch (e) { next(e); }
 });
 

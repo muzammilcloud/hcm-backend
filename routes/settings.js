@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { CURRENCIES, COUNTRIES, COUNTRY_DEFAULT_CURRENCY } = require('../services/locales');
+const { getPreset } = require('../services/taxModules');
 
 // GET /api/settings/locales — public lists for the picker UI
 router.get('/settings/locales', (req, res) => {
@@ -86,6 +87,39 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
         slip_signatory_title ?? null,
       ]
     );
+
+    // Auto-load tax preset on country change — only when the admin hasn't
+    // confirmed brackets yet (so we don't overwrite hand-edited ones).
+    const countryChanged = country_code && country_code !== current.country_code;
+    if (countryChanged) {
+      try {
+        const [meta] = await pool.execute('SELECT confirmed FROM tax_bracket_meta WHERE singleton_key = 1 LIMIT 1');
+        const isConfirmed = meta.length > 0 && meta[0].confirmed === 1;
+        if (!isConfirmed) {
+          const preset = getPreset(country_code);
+          if (preset) {
+            await pool.execute('DELETE FROM tax_brackets');
+            for (let i = 0; i < preset.brackets.length; i++) {
+              const b = preset.brackets[i];
+              await pool.execute(
+                `INSERT INTO tax_brackets (band_from, band_to, rate, sort_order)
+                 VALUES (?, ?, ?, ?)`,
+                [Number(b.band_from), b.band_to == null ? null : Number(b.band_to), Number(b.rate), (i + 1) * 10]
+              );
+            }
+            await pool.execute(
+              `INSERT INTO tax_bracket_meta (singleton_key, source_country, preset_year, confirmed)
+               VALUES (1, ?, ?, 0)
+               ON DUPLICATE KEY UPDATE
+                 source_country = VALUES(source_country),
+                 preset_year    = VALUES(preset_year),
+                 confirmed      = VALUES(confirmed)`,
+              [country_code, preset.year]
+            );
+          }
+        }
+      } catch (e) { console.error('[auto-load tax preset]', e.message); }
+    }
 
     const [updated] = await pool.execute('SELECT * FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
     res.json(updated[0]);

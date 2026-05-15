@@ -288,10 +288,13 @@ async function initTenantSchema(poolArg) {
       preset_year    VARCHAR(10) DEFAULT NULL,
       confirmed      TINYINT(1) NOT NULL DEFAULT 0,
       confirmed_at   DATETIME DEFAULT NULL,
+      tax_enabled    TINYINT(1) NOT NULL DEFAULT 1,
       created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB
   `);
+  // Forward-compat — add the column on existing tenants that pre-date it.
+  try { await pool.execute(`ALTER TABLE tax_bracket_meta ADD COLUMN tax_enabled TINYINT(1) NOT NULL DEFAULT 1`); } catch (_) {}
 
   // ── Tenant settings ──────────────────────────────────────────────────────
   // Singleton row per tenant DB (enforced via UNIQUE on singleton_key).

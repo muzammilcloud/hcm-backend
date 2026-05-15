@@ -78,15 +78,26 @@ async function calculateSlip(pool, employeeId) {
   );
   const overrideMap = new Map(overrides.map(o => [o.component_id, o]));
 
-  // Tax brackets
+  // Tax brackets + on/off toggle. If tax_enabled is 0, the calculator
+  // skips tax calculation entirely — no tax line on the slip.
   const [brackets] = await pool.execute(
     `SELECT band_from, band_to, rate FROM tax_brackets ORDER BY sort_order ASC, band_from ASC`
   );
-  const taxBrackets = brackets.map(b => ({
-    band_from: Number(b.band_from),
-    band_to:   b.band_to == null ? null : Number(b.band_to),
-    rate:      Number(b.rate),
-  }));
+  let taxEnabled = true;
+  try {
+    const [metaRows] = await pool.execute(
+      `SELECT tax_enabled FROM tax_bracket_meta WHERE singleton_key = 1 LIMIT 1`
+    );
+    if (metaRows.length && metaRows[0].tax_enabled != null) taxEnabled = !!metaRows[0].tax_enabled;
+  } catch (_) { /* legacy DB without column — default to enabled */ }
+
+  const taxBrackets = taxEnabled
+    ? brackets.map(b => ({
+        band_from: Number(b.band_from),
+        band_to:   b.band_to == null ? null : Number(b.band_to),
+        rate:      Number(b.rate),
+      }))
+    : [];
 
   // First pass: compute basic + fixed + percent_of_basic earnings/deductions
   let gross = basic;
