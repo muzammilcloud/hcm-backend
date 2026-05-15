@@ -1,6 +1,6 @@
 const axios  = require('axios');
 const crypto = require('crypto');
-const { getDB } = require('../db');
+const { getDB, getPlatformDB, tenantContext } = require('../db');
 const { OT_THRESHOLD_HOURS } = require('../config/business');
 const { getIntegrationConfig } = require('./integrations');
 
@@ -164,84 +164,92 @@ async function sendSlackEphemeral(channel, userId, text, blocks = null) {
   }
 }
 
-// OT Checker (runs every 5 minutes)
-async function checkOvertimePrompts() {
-  try {
-    const pool = await getDB();
+// Runs the OT-prompt check against ONE tenant (assumes tenant context already
+// active via tenantContext.run). All previous logic preserved verbatim.
+async function checkOvertimePromptsForCurrentTenant() {
+  const pool = await getDB();
 
-    const [activeEntries] = await pool.execute(`
-      SELECT pte.id, pte.portal_user_id, pte.clock_in, pte.ot_prompt_sent,
-             pu.name, pu.email, pu.slack_user_id,
-             TIMESTAMPDIFF(SECOND, pte.clock_in, NOW()) / 3600 as hours_worked
-      FROM portal_time_entries pte
-      JOIN portal_users pu ON pte.portal_user_id = pu.id
-      WHERE pte.clock_out IS NULL AND pte.ot_prompt_sent = 0
-      HAVING hours_worked >= ${OT_THRESHOLD_HOURS}
-    `);
+  const [activeEntries] = await pool.execute(`
+    SELECT pte.id, pte.portal_user_id, pte.clock_in, pte.ot_prompt_sent,
+           pu.name, pu.email, pu.slack_user_id,
+           TIMESTAMPDIFF(SECOND, pte.clock_in, NOW()) / 3600 as hours_worked
+    FROM portal_time_entries pte
+    JOIN portal_users pu ON pte.portal_user_id = pu.id
+    WHERE pte.clock_out IS NULL AND pte.ot_prompt_sent = 0
+    HAVING hours_worked >= ${OT_THRESHOLD_HOURS}
+  `);
 
-    for (const entry of activeEntries) {
-      let slackUserId = entry.slack_user_id;
-      if (!slackUserId) {
-        slackUserId = await getSlackUserIdByEmail(entry.email);
-        if (slackUserId) {
-          await pool.execute('UPDATE portal_users SET slack_user_id = ? WHERE id = ?', [slackUserId, entry.portal_user_id]);
-        }
-      }
-
-      if (!slackUserId) {
-        console.warn(`⚠️  No Slack user found for ${entry.email} - skipping OT prompt`);
-        continue;
-      }
-
-      // Send DM with interactive buttons
-      const text = `⏰ *9 Hours Complete!*\n\nYou've been working for 9 hours today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?`;
-      const blocks = [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `⏰ *9 Hours Complete!*\n\nYou've been working for *9 hours* today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?`
-          }
-        },
-        {
-          type: "actions",
-          block_id: `ot_prompt_${entry.id}`,
-          elements: [
-            {
-              type: "button",
-              text: { type: "plain_text", text: "Continue Working", emoji: true },
-              style: "primary",
-              action_id: "ot_continue",
-              value: String(entry.id)
-            },
-            {
-              type: "button",
-              text: { type: "plain_text", text: "Clock Out Now", emoji: true },
-              style: "danger",
-              action_id: "ot_clockout",
-              value: String(entry.id)
-            }
-          ]
-        }
-      ];
-
-      const sent = await sendSlackDM(slackUserId, text, blocks);
-
-      if (sent) {
-        await pool.execute('UPDATE portal_time_entries SET ot_prompt_sent = 1 WHERE id = ?', [entry.id]);
-        console.log(`✅ OT prompt sent to ${entry.name} (${Math.floor(entry.hours_worked)}h worked)`);
+  for (const entry of activeEntries) {
+    let slackUserId = entry.slack_user_id;
+    if (!slackUserId) {
+      slackUserId = await getSlackUserIdByEmail(entry.email);
+      if (slackUserId) {
+        await pool.execute('UPDATE portal_users SET slack_user_id = ? WHERE id = ?', [slackUserId, entry.portal_user_id]);
       }
     }
+
+    if (!slackUserId) {
+      console.warn(`⚠️  No Slack user found for ${entry.email} - skipping OT prompt`);
+      continue;
+    }
+
+    const text = `⏰ *9 Hours Complete!*\n\nYou've been working for 9 hours today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?`;
+    const blocks = [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `⏰ *9 Hours Complete!*\n\nYou've been working for *9 hours* today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?` }
+      },
+      {
+        type: "actions",
+        block_id: `ot_prompt_${entry.id}`,
+        elements: [
+          { type: "button", text: { type: "plain_text", text: "Continue Working", emoji: true }, style: "primary", action_id: "ot_continue", value: String(entry.id) },
+          { type: "button", text: { type: "plain_text", text: "Clock Out Now",    emoji: true }, style: "danger",  action_id: "ot_clockout", value: String(entry.id) },
+        ]
+      }
+    ];
+
+    const sent = await sendSlackDM(slackUserId, text, blocks);
+    if (sent) {
+      await pool.execute('UPDATE portal_time_entries SET ot_prompt_sent = 1 WHERE id = ?', [entry.id]);
+      console.log(`✅ OT prompt sent to ${entry.name} (${Math.floor(entry.hours_worked)}h worked)`);
+    }
+  }
+}
+
+// OT checker (runs every 5 minutes). Iterates every active tenant and runs
+// the per-tenant check inside that tenant's AsyncLocalStorage context, so
+// getDB() targets the right per-tenant pool.
+async function checkOvertimePrompts() {
+  let tenants = [];
+  try {
+    const platform = getPlatformDB();
+    const [rows] = await platform.execute(
+      `SELECT id, slug, db_name FROM tenants WHERE status = 'active'`
+    );
+    tenants = rows;
   } catch (e) {
-    console.error('❌ OT checker error:', e.message);
+    console.error('[OT check] could not list tenants:', e.message);
+    return;
+  }
+
+  for (const t of tenants) {
+    try {
+      await tenantContext.run(
+        { dbName: t.db_name, slug: t.slug, tenantId: t.id },
+        () => checkOvertimePromptsForCurrentTenant()
+      );
+    } catch (e) {
+      console.error(`❌ OT checker (${t.slug}):`, e.message);
+    }
   }
 }
 
 // Start OT checker (every 5 minutes)
 function startOTChecker() {
   checkOvertimePrompts(); // Run immediately
-  setInterval(checkOvertimePrompts, 5 * 60 * 1000); // Then every 5 minutes
-  console.log('✅ OT checker started (runs every 5 minutes)');
+  setInterval(checkOvertimePrompts, 5 * 60 * 1000);
+  console.log('✅ OT checker started (runs every 5 minutes, per tenant)');
 }
 
 module.exports = {

@@ -1,4 +1,4 @@
-const { getDB } = require('../db');
+const { getDB, getPlatformDB, tenantContext } = require('../db');
 const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBirthdayGreetingEmail, sendAnniversaryReminderEmail, sendAnniversaryGreetingEmail } = require('./email');
 const { postLeaveReportToSlack } = require('./slack');
 
@@ -277,6 +277,32 @@ async function sendDailyLeaveReport() {
 }
 
 // Scheduled report jobs
+// Run a function once per active tenant, inside that tenant's
+// AsyncLocalStorage context so getDB() targets its DB pool.
+async function forEachActiveTenant(label, fn) {
+  let tenants = [];
+  try {
+    const platform = getPlatformDB();
+    const [rows] = await platform.execute(
+      `SELECT id, slug, db_name FROM tenants WHERE status = 'active'`
+    );
+    tenants = rows;
+  } catch (e) {
+    console.error(`[${label}] could not list tenants:`, e.message);
+    return;
+  }
+  for (const t of tenants) {
+    try {
+      await tenantContext.run(
+        { dbName: t.db_name, slug: t.slug, tenantId: t.id },
+        () => fn(t)
+      );
+    } catch (e) {
+      console.error(`[${label}] ${t.slug}:`, e.message);
+    }
+  }
+}
+
 function scheduleReports() {
   // Check every 30 minutes
   setInterval(async () => {
@@ -285,22 +311,30 @@ function scheduleReports() {
     const date = now.getDate();
     const hour = now.getHours();
     const min  = now.getMinutes();
-    // Weekly: Monday 8 AM
-    if (day === 1 && hour === 8 && min < 30) await sendWeeklyReports();
-    // Monthly: 1st of month 8 AM
-    if (date === 1 && hour === 8 && min < 30) await sendMonthlyReports();
-    // Salary slips: 3rd of month 9 AM
-    if (date === 3 && hour === 9 && min < 30) await sendMonthlySalarySlips();
-    // Birthdays: every day at 8 AM
-    if (hour === 8 && min < 30) await checkBirthdays();
-    // Daily leave & WFH report: fires after 12:00 PKT (Asia/Karachi), once per day.
+
+    // Each scheduled email/report is per-tenant — wrap the call in
+    // tenant context iteration so getDB() inside the function returns
+    // each tenant's pool in turn.
+
+    if (day === 1 && hour === 8 && min < 30) {
+      await forEachActiveTenant('weekly-report', () => sendWeeklyReports());
+    }
+    if (date === 1 && hour === 8 && min < 30) {
+      await forEachActiveTenant('monthly-report', () => sendMonthlyReports());
+    }
+    if (date === 3 && hour === 9 && min < 30) {
+      await forEachActiveTenant('monthly-salary-slips', () => sendMonthlySalarySlips());
+    }
+    if (hour === 8 && min < 30) {
+      await forEachActiveTenant('birthdays', () => checkBirthdays());
+    }
     const pkt = nowIn('Asia/Karachi');
     if (pkt.hour >= 12 && pkt.hour < 24 && !firedToday('dailyLeaveReport', 'Asia/Karachi')) {
-      await sendDailyLeaveReport();
+      await forEachActiveTenant('daily-leave-report', () => sendDailyLeaveReport());
     }
-    // Tenant lifecycle: expire trials, hard-delete tenants past the grace
-    // window. Runs once per day at 3 AM (server local). Skipped if PLATFORM_DB
-    // isn't initialized.
+
+    // Platform-level — runs against the platform DB directly, NOT
+    // wrapped in tenant context. Reads tenants table, drops expired DBs.
     if (hour === 3 && min < 30 && !firedToday('tenantLifecycle', 'UTC')) {
       await runTenantLifecycle();
     }
