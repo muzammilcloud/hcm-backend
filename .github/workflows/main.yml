@@ -19,10 +19,20 @@ jobs:
       # =========================
       - name: Setup SSH
         run: |
+          # Fail fast with a clear message if any secret is missing
+          if [ -z "${{ secrets.HOST }}" ];     then echo "::error::HOST secret is missing or empty";     exit 1; fi
+          if [ -z "${{ secrets.USERNAME }}" ]; then echo "::error::USERNAME secret is missing or empty"; exit 1; fi
+          if [ -z "${{ secrets.SSH_KEY }}" ];  then echo "::error::SSH_KEY secret is missing or empty";  exit 1; fi
+
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Drop the silent stderr redirect so the next failure is visible
+          if ! ssh-keyscan -H "${{ secrets.HOST }}" >> ~/.ssh/known_hosts; then
+            echo "::error::ssh-keyscan failed — is ${{ secrets.HOST }} reachable on port 22?"
+            exit 1
+          fi
 
       # =========================
       # 2. Deploy on remote server
