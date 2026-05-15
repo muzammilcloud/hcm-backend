@@ -1,8 +1,27 @@
 const express = require('express');
 const router  = express.Router();
 const { getDB } = require('../db');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { calculateSlip } = require('../services/salaryCalc');
+
+// GET /api/employee/me/slip — logged-in employee fetches their own slip
+router.get('/employee/me/slip', requireEmployee, async (req, res, next) => {
+  try {
+    const pool = await getDB();
+    const [rows] = await pool.execute(
+      'SELECT employee_id FROM portal_users WHERE id = ?',
+      [req.portalUserId]
+    );
+    if (!rows.length || !rows[0].employee_id) {
+      return res.status(404).json({ error: 'No employee record linked to this portal account.' });
+    }
+    const slip = await calculateSlip(pool, rows[0].employee_id);
+    res.json(slip);
+  } catch (e) {
+    if (e.message === 'Employee not found') return res.status(404).json({ error: e.message });
+    next(e);
+  }
+});
 
 // GET /api/salary/slip/:employee_id — calculated salary slip preview
 router.get('/salary/slip/:employee_id', requireAdmin, async (req, res, next) => {

@@ -45,25 +45,23 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
     if (rows.length === 0) return res.status(404).json({ error: 'Settings not initialized' });
     const current = rows[0];
 
-    // Currency lock: once currency_locked=1, the field can't change without
-    // going through the (future) reset-payroll-history flow.
+    if (country_code && !COUNTRIES.some(c => c.code === country_code)) {
+      return res.status(400).json({ error: `Unknown country: ${country_code}` });
+    }
+
+    // Currency follows country by default. If the admin didn't supply an
+    // explicit currency override, and the country changed, derive currency
+    // from the country's default. Currency lock is intentionally not enforced
+    // — admins can change either field any time.
     let nextCurrency = current.currency;
-    if (currency && currency !== current.currency) {
-      if (current.currency_locked) {
-        return res.status(400).json({
-          error: 'Currency is locked. Changing it would invalidate generated salary slips. Reset payroll history first.',
-          code:  'CURRENCY_LOCKED',
-        });
-      }
-      // Validate the currency exists in our list
+    if (currency) {
       if (!CURRENCIES.some(c => c.code === currency)) {
         return res.status(400).json({ error: `Unknown currency: ${currency}` });
       }
       nextCurrency = currency;
-    }
-
-    if (country_code && !COUNTRIES.some(c => c.code === country_code)) {
-      return res.status(400).json({ error: `Unknown country: ${country_code}` });
+    } else if (country_code && country_code !== current.country_code) {
+      const auto = COUNTRY_DEFAULT_CURRENCY[country_code];
+      if (auto && CURRENCIES.some(c => c.code === auto)) nextCurrency = auto;
     }
 
     await pool.execute(
