@@ -203,6 +203,24 @@ async function initTenantSchema(poolArg) {
     )
   `);
 
+  // ── Tenant integrations ──────────────────────────────────────────────────
+  // Per-tenant credentials for third-party services (Slack, SMTP, etc.).
+  // config_encrypted holds an AES-256-GCM ciphertext of the JSON config.
+  // UNIQUE(integration_type) means one row per integration type per tenant.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS tenant_integrations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      integration_type ENUM('slack','smtp') NOT NULL UNIQUE,
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      config_encrypted MEDIUMTEXT,
+      last_tested_at DATETIME NULL,
+      last_test_status ENUM('ok','failed') NULL,
+      last_test_message TEXT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+
   // ── Salary components ─────────────────────────────────────────────────────
   // Per-tenant library of earning/deduction lines used by the calculator.
   //

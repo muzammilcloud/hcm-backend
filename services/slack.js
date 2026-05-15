@@ -2,9 +2,20 @@ const axios  = require('axios');
 const crypto = require('crypto');
 const { getDB } = require('../db');
 const { OT_THRESHOLD_HOURS } = require('../config/business');
+const { getIntegrationConfig } = require('./integrations');
+
+// Per-tenant Slack credentials with env fallback. Resolved against the
+// current tenant context (AsyncLocalStorage); when no tenant context,
+// returns the platform env defaults.
+async function getSlackCreds() {
+  try { return await getIntegrationConfig('slack'); }
+  catch (_) { return { bot_token: process.env.SLACK_BOT_TOKEN || '', signing_secret: process.env.SLACK_SIGNING_SECRET || '', source: 'platform' }; }
+}
 
 // Verify Slack signing secret so only real Slack requests are accepted
 function verifySlackSignature(req) {
+  // Signing secret is verified on inbound webhooks before we know the
+  // tenant context, so we use the platform default here.
   const secret    = process.env.SLACK_SIGNING_SECRET;
   if (!secret) return true; // skip in dev if not configured
   const timestamp = req.headers['x-slack-request-timestamp'];
@@ -41,7 +52,7 @@ async function postLeaveReportToSlack(text, blocks = null) {
 
 // Look up portal user by Slack user_id via Slack API (matches email)
 async function getEmployeeBySlackId(slackUserId, pool) {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const botToken = (await getSlackCreds()).bot_token;
   if (!botToken) throw new Error('SLACK_BOT_TOKEN not configured.');
 
   const resp = await axios.get('https://slack.com/api/users.info', {
@@ -73,7 +84,7 @@ function fmtTimeInZone(date, tz) {
 
 // Get Slack user's timezone via API
 async function getSlackUserTz(userId) {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const botToken = (await getSlackCreds()).bot_token;
   if (!botToken) return 'UTC';
   try {
     const resp = await axios.get('https://slack.com/api/users.info', {
@@ -86,7 +97,7 @@ async function getSlackUserTz(userId) {
 
 // Get Slack user ID by email
 async function getSlackUserIdByEmail(email) {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const botToken = (await getSlackCreds()).bot_token;
   if (!botToken) return null;
   try {
     const resp = await axios.get('https://slack.com/api/users.lookupByEmail', {
@@ -102,7 +113,7 @@ async function getSlackUserIdByEmail(email) {
 
 // Send Slack DM to user
 async function sendSlackDM(userId, text, blocks = null) {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const botToken = (await getSlackCreds()).bot_token;
   if (!botToken) {
     console.warn('⚠️  SLACK_BOT_TOKEN not set — skipping Slack DM');
     return false;
@@ -128,7 +139,7 @@ async function sendSlackDM(userId, text, blocks = null) {
 
 // Send ephemeral Slack message (only visible to user)
 async function sendSlackEphemeral(channel, userId, text, blocks = null) {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const botToken = (await getSlackCreds()).bot_token;
   if (!botToken) {
     console.warn('⚠️  SLACK_BOT_TOKEN not set — skipping ephemeral message');
     return false;

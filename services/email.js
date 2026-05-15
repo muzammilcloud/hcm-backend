@@ -1,12 +1,41 @@
 const nodemailer = require('nodemailer');
+const { getIntegrationConfig } = require('./integrations');
 
-const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_PORT === '465',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+// Build a transporter from the current tenant's SMTP config (with env fallback).
+// Recreated per call — nodemailer's pool overhead is negligible at our send rate
+// and this lets each tenant use their own SMTP server.
+async function getTransporter() {
+  const cfg = await getIntegrationConfig('smtp');
+  return nodemailer.createTransport({
+    host:   cfg.host,
+    port:   parseInt(cfg.port || 587),
+    secure: Number(cfg.port) === 465,
+    auth:   cfg.user ? { user: cfg.user, pass: cfg.password } : undefined,
+  });
+}
+
+// Build a properly-formatted From: address from the tenant's SMTP config.
+async function getFromAddress() {
+  const cfg = await getIntegrationConfig('smtp');
+  const email = cfg.from_email || cfg.user || '';
+  const name  = cfg.from_name  || 'Tickin';
+  return email ? `"${name}" <${email}>` : `"${name}"`;
+}
+
+// Backwards-compat shim — older code wrote `transporter.sendMail(...)` directly
+// at module top. Replaced with a Proxy that resolves a fresh transporter on
+// every `.sendMail()` call.
+const transporter = new Proxy({}, {
+  get(_, prop) {
+    if (prop === 'sendMail') {
+      return async (opts) => {
+        const t = await getTransporter();
+        // If caller didn't set a from, fill it from tenant config
+        if (!opts.from) opts.from = await getFromAddress();
+        return t.sendMail(opts);
+      };
+    }
+    return undefined;
   },
 });
 

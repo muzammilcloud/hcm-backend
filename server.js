@@ -41,6 +41,7 @@ const settingsRoutes    = require('./routes/settings');
 const salaryComponentsRoutes = require('./routes/salaryComponents');
 const salaryTaxRoutes        = require('./routes/salaryTax');
 const salarySlipRoutes       = require('./routes/salarySlip');
+const integrationsRoutes     = require('./routes/integrations');
 
 const app = express();
 
@@ -109,6 +110,7 @@ app.use('/api', settingsRoutes);
 app.use('/api', salaryComponentsRoutes);
 app.use('/api', salaryTaxRoutes);
 app.use('/api', salarySlipRoutes);
+app.use('/api', integrationsRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
 
