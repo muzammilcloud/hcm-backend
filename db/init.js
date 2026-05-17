@@ -1,5 +1,6 @@
 const { getDB, hashPassword } = require('../db');
-const { seedDummyData } = require('./seed');
+// seed.js is kept in the repo but no longer auto-imported — new tenants
+// start blank. Manual seeding still possible via:  require('./seed').seedDummyData(pool)
 
 // Run the full tenant-schema initialization against a specific pool.
 // In multi-tenant mode, called once per tenant by the provisioning service.
@@ -633,7 +634,11 @@ async function initTenantSchema(poolArg) {
   `);
 
   console.log('✅ Database tables ready');
-  await seedDummyData(pool);
+  // Dummy seed data (Ali/Sara/Omar/muzammilquecko + salary history) intentionally
+  // NOT seeded for new tenants. The `app` tenant inherits its data from the legacy
+  // DB via scripts/migrate-to-multitenant.js, so removing this call only affects
+  // tenants provisioned via signup, which should start empty per product spec.
+  // seed.js is kept on disk if a "demo workspace" template is ever needed.
 
   // ── Idempotent salary patch for muzammilquecko@gmail.com ─────────────────
   const [muzRows] = await pool.execute(
