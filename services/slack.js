@@ -28,10 +28,12 @@ function verifySlackSignature(req) {
   return `v0=${hmac}` === sigHeader;
 }
 
-// Post a message to the #attendance Slack channel
+// Post a message to the workspace's general-notifications Slack channel.
+// URL comes from the current tenant's Slack integration; falls back to
+// SLACK_WEBHOOK_URL env if the tenant hasn't configured their own.
 async function postToSlack(text, blocks = null) {
-  const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-  if (!webhookUrl) { console.warn('⚠️  SLACK_WEBHOOK_URL not set — skipping Slack post'); return; }
+  const webhookUrl = (await getSlackCreds()).webhook_url;
+  if (!webhookUrl) { console.warn('⚠️  Slack webhook URL not configured — skipping Slack post'); return; }
   try {
     await axios.post(webhookUrl, blocks ? { text, blocks } : { text });
   } catch (e) {
@@ -39,10 +41,11 @@ async function postToSlack(text, blocks = null) {
   }
 }
 
-// Post to the dedicated daily-leave-report Slack channel (separate from #attendance).
+// Post to the dedicated daily-leave-report Slack channel (separate from
+// the general one). Tenant config first, env fallback second.
 async function postLeaveReportToSlack(text, blocks = null) {
-  const webhookUrl = process.env.SLACK_LEAVE_REPORT_WEBHOOK_URL;
-  if (!webhookUrl) { console.warn('⚠️  SLACK_LEAVE_REPORT_WEBHOOK_URL not set — skipping leave report post'); return; }
+  const webhookUrl = (await getSlackCreds()).leave_report_webhook_url;
+  if (!webhookUrl) { console.warn('⚠️  Slack leave-report webhook URL not configured — skipping leave report post'); return; }
   try {
     await axios.post(webhookUrl, blocks ? { text, blocks } : { text });
   } catch (e) {
