@@ -76,11 +76,42 @@ router.get('/salary/tax/preset/:country', requireAdmin, (req, res) => {
 });
 
 // GET /api/salary/tax/brackets — current brackets + meta
+// If the brackets table is empty AND the tenant's country has a bundled
+// preset, populate it on the fly so the admin lands on a usable starting
+// point (confirmed=0, so the "review and confirm" banner still appears).
 router.get('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
   try {
     const pool = await getDB();
-    const brackets = await readBrackets(pool);
-    const meta     = await readMeta(pool);
+    let brackets = await readBrackets(pool);
+
+    if (brackets.length === 0) {
+      try {
+        const [settings] = await pool.execute(
+          'SELECT country_code FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
+        );
+        const country = settings[0]?.country_code;
+        const preset  = country ? getPreset(country) : null;
+        if (preset) {
+          for (let i = 0; i < preset.brackets.length; i++) {
+            const b = preset.brackets[i];
+            await pool.execute(
+              `INSERT INTO tax_brackets (band_from, band_to, rate, sort_order)
+               VALUES (?, ?, ?, ?)`,
+              [Number(b.band_from), b.band_to == null ? null : Number(b.band_to), Number(b.rate), (i + 1) * 10]
+            );
+          }
+          await pool.execute(
+            `INSERT INTO tax_bracket_meta (singleton_key, source_country, preset_year, confirmed)
+             VALUES (1, ?, ?, 0)
+             ON DUPLICATE KEY UPDATE source_country = VALUES(source_country), preset_year = VALUES(preset_year)`,
+            [country, preset.year]
+          );
+          brackets = await readBrackets(pool);
+        }
+      } catch (e) { console.error('[tax brackets auto-seed]', e.message); }
+    }
+
+    const meta = await readMeta(pool);
     res.json({
       brackets,
       meta: meta ? {
@@ -152,8 +183,26 @@ router.post('/salary/tax/preview', requireAdmin, async (req, res, next) => {
     if (isNaN(income) || income < 0) return res.status(400).json({ error: 'income must be a non-negative number' });
     const pool = await getDB();
     const brackets = await readBrackets(pool);
+
+    // Surface explicit reasons when the result is 0 — otherwise admins
+    // see "₨ 0 · 0% effective rate" with no clue why.
+    const meta = await readMeta(pool);
+    let note = null;
+    if (brackets.length === 0) {
+      note = 'No tax brackets configured. Save brackets first (or pick a country in Settings — its preset auto-loads here).';
+    } else if (meta && meta.tax_enabled === 0) {
+      note = 'Income tax is disabled for this workspace. Enable it at the top of this page to apply brackets.';
+    } else if (brackets.every(b => Number(b.rate) === 0)) {
+      note = 'All bracket rates are 0% — this workspace is configured as tax-free.';
+    }
+
     const tax = calculateTax(income, brackets);
-    res.json({ income, tax, effective_rate: income > 0 ? Math.round((tax / income) * 10000) / 100 : 0 });
+    res.json({
+      income, tax,
+      effective_rate: income > 0 ? Math.round((tax / income) * 10000) / 100 : 0,
+      note,
+      brackets_count: brackets.length,
+    });
   } catch (e) { next(e); }
 });
 
