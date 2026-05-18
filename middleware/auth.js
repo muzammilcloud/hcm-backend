@@ -8,17 +8,21 @@ async function requireAdmin(req, res, next) {
 
     // 1. Legacy env-var admin session
     const [adminRows] = await pool.execute(
-      'SELECT * FROM admin_sessions WHERE token = ? AND expires_at > NOW()',
+      `SELECT a.id, a.username FROM admin_sessions s
+       LEFT JOIN admins a ON a.id = s.admin_id
+       WHERE s.token = ? AND s.expires_at > NOW()`,
       [token]
     );
     if (adminRows.length > 0) {
-      req.adminId = adminRows[0].admin_id;
+      req.adminId = adminRows[0].id;
+      req.user = { id: adminRows[0].id, email: adminRows[0].username, role: 'legacy-admin' };
       return next();
     }
 
     // 2. Sys-admin portal session
     const [portalRows] = await pool.execute(
-      `SELECT ps.portal_user_id FROM portal_sessions ps
+      `SELECT ps.portal_user_id, pu.email, pu.name, pu.portal_role
+       FROM portal_sessions ps
        JOIN portal_users pu ON ps.portal_user_id = pu.id
        WHERE ps.token = ? AND ps.expires_at > NOW() AND pu.portal_role = 'sys-admin'`,
       [token]
@@ -27,6 +31,12 @@ async function requireAdmin(req, res, next) {
       req.adminId      = 1; // virtual — satisfies routes that reference req.adminId
       req.portalUserId = portalRows[0].portal_user_id;
       req.isSysAdmin   = true;
+      req.user         = {
+        id: portalRows[0].portal_user_id,
+        email: portalRows[0].email,
+        name: portalRows[0].name,
+        role: portalRows[0].portal_role,
+      };
       return next();
     }
 

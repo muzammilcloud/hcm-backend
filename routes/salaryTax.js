@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { PRESETS, getPreset, listSupportedCountries, calculateTax } = require('../services/taxModules');
+const { recordAudit } = require('../services/audit');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -134,6 +135,7 @@ router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
     if (errors.length) return res.status(400).json({ error: 'Invalid brackets', details: errors });
 
     const pool = await getDB();
+    const before = await readBrackets(pool);
     await pool.execute('DELETE FROM tax_brackets');
     for (let i = 0; i < brackets.length; i++) {
       const b = brackets[i];
@@ -158,6 +160,12 @@ router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
 
     const rows = await readBrackets(pool);
     const meta = await readMeta(pool);
+    recordAudit(req, {
+      action: 'tax.brackets.updated',
+      target: { type: 'tax_brackets', id: 'singleton' },
+      before: { brackets: before },
+      after:  { brackets: rows, source_country, preset_year, confirmed, tax_enabled },
+    });
     res.json({ brackets: rows, meta });
   } catch (e) { next(e); }
 });
@@ -172,6 +180,10 @@ router.put('/salary/tax/enabled', requireAdmin, async (req, res, next) => {
        ON DUPLICATE KEY UPDATE tax_enabled = VALUES(tax_enabled)`,
       [enabled]
     );
+    recordAudit(req, {
+      action: `tax.${enabled ? 'enabled' : 'disabled'}`,
+      target: { type: 'tax_brackets', id: 'singleton' },
+    });
     res.json({ tax_enabled: !!enabled });
   } catch (e) { next(e); }
 });

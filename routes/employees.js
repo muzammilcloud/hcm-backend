@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB, generateToken, logEvent } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { sendInviteEmail } = require('../services/email');
+const { recordAudit } = require('../services/audit');
 
 // POST /api/employees/data — Add employee record only (no invite)
 router.post('/employees/data', requireAdmin, async (req, res) => {
@@ -151,6 +152,11 @@ router.delete('/employees/:id', requireAdmin, async (req, res) => {
     await pool.execute('DELETE FROM employees WHERE id=?', [req.params.id]);
     if (emp) {
       await logEvent(pool, { employee_id: null, employee_name: emp.name, department: emp.department, role: emp.role, event: 'deleted', detail: `Removed after ${emp.days_served || 0} days · ${emp.total_hours || 0}h total worked · ${emp.email}` });
+      recordAudit(req, {
+        action: 'employee.deleted',
+        target: { type: 'employee', id: req.params.id },
+        before: { id: emp.id, name: emp.name, email: emp.email, role: emp.role, department: emp.department, emp_code: emp.emp_code, days_served: emp.days_served, total_hours: emp.total_hours },
+      });
     }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

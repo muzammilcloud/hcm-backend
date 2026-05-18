@@ -8,6 +8,7 @@ const {
   saveIntegrationConfig, setEnabled, deleteIntegration,
   recordTestResult,
 } = require('../services/integrations');
+const { recordAudit } = require('../services/audit');
 
 const TYPES = new Set(['slack', 'smtp']);
 
@@ -63,6 +64,13 @@ router.put('/integrations/:type', requireAdmin, async (req, res, next) => {
     }
 
     await saveIntegrationConfig(type, { config: finalConfig, enabled });
+    // Audit without secret values — just record which fields changed and the
+    // enabled state. Full secret diff would be a credential leak.
+    recordAudit(req, {
+      action: `integration.${type}.saved`,
+      target: { type: 'integration', id: type },
+      after: { enabled: !!enabled, fields_set: Object.keys(finalConfig || {}) },
+    });
     res.json(await getIntegrationMasked(type));
   } catch (e) { next(e); }
 });
@@ -71,7 +79,12 @@ router.put('/integrations/:type', requireAdmin, async (req, res, next) => {
 router.put('/integrations/:type/enabled', requireAdmin, async (req, res, next) => {
   try {
     if (!TYPES.has(req.params.type)) return res.status(404).json({ error: 'Unknown integration' });
-    await setEnabled(req.params.type, !!req.body?.enabled);
+    const enabled = !!req.body?.enabled;
+    await setEnabled(req.params.type, enabled);
+    recordAudit(req, {
+      action: `integration.${req.params.type}.${enabled ? 'enabled' : 'disabled'}`,
+      target: { type: 'integration', id: req.params.type },
+    });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -81,6 +94,10 @@ router.delete('/integrations/:type', requireAdmin, async (req, res, next) => {
   try {
     if (!TYPES.has(req.params.type)) return res.status(404).json({ error: 'Unknown integration' });
     await deleteIntegration(req.params.type);
+    recordAudit(req, {
+      action: `integration.${req.params.type}.removed`,
+      target: { type: 'integration', id: req.params.type },
+    });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

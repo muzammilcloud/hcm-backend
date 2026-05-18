@@ -43,6 +43,8 @@ const salaryTaxRoutes        = require('./routes/salaryTax');
 const salarySlipRoutes       = require('./routes/salarySlip');
 const integrationsRoutes     = require('./routes/integrations');
 const setupRoutes            = require('./routes/setup');
+const auditRoutes            = require('./routes/audit');
+const { router: googleAuthRoutes } = require('./routes/googleAuth');
 
 const app = express();
 
@@ -113,6 +115,8 @@ app.use('/api', salaryTaxRoutes);
 app.use('/api', salarySlipRoutes);
 app.use('/api', integrationsRoutes);
 app.use('/api', setupRoutes);
+app.use('/api', auditRoutes);
+app.use('/api', googleAuthRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
 

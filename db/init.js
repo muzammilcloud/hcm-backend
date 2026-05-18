@@ -170,6 +170,8 @@ async function initTenantSchema(poolArg) {
   try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN revoked_at DATETIME`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN employee_id INT DEFAULT NULL`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN portal_role ENUM('employee','team-lead','sys-admin') DEFAULT 'employee'`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN google_sub VARCHAR(40) NULL`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE portal_users ADD UNIQUE KEY uq_portal_users_google_sub (google_sub)`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}
@@ -199,6 +201,7 @@ async function initTenantSchema(poolArg) {
       reset_expires_at  DATETIME,
       slack_user_id VARCHAR(50),
       employee_id   INT DEFAULT NULL,
+      google_sub    VARCHAR(40) NULL UNIQUE,
       revoked_at  DATETIME,
       created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -630,6 +633,31 @@ async function initTenantSchema(poolArg) {
       created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_recipient_unread (recipient_user_id, read_at),
       FOREIGN KEY (recipient_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ── Audit logs ─────────────────────────────────────────────────────────────
+  // Append-only record of every state change. Written by services/audit.js
+  // from each route handler. We never UPDATE rows here; corrections come as
+  // new entries that supersede prior ones.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      actor_user_id   INT NULL,
+      actor_email     VARCHAR(255) NULL,
+      actor_role      VARCHAR(50)  NULL,
+      action          VARCHAR(80)  NOT NULL,
+      target_type     VARCHAR(40)  NULL,
+      target_id       VARCHAR(80)  NULL,
+      before_json     JSON NULL,
+      after_json      JSON NULL,
+      ip              VARCHAR(64)  NULL,
+      user_agent      VARCHAR(500) NULL,
+      created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_created (created_at),
+      INDEX idx_audit_action  (action, created_at),
+      INDEX idx_audit_target  (target_type, target_id, created_at),
+      INDEX idx_audit_actor   (actor_user_id, created_at)
     )
   `);
 

@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB, generateToken, logEvent } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { sendInviteEmail } = require('../services/email');
+const { recordAudit } = require('../services/audit');
 
 // Build the set-password URL for an invite, scoped to the current tenant.
 // Without this, sendInviteEmail falls back to process.env.FRONTEND_URL
@@ -120,6 +121,11 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
       WHERE pu.id = ?
     `, [puId]);
     await logEvent(pool, { employee_name: displayName, department: department||'General', role: role||'Employee', event: 'portal_invited', detail: `Portal invite sent to ${email}` });
+    recordAudit(req, {
+      action: 'portal_user.invited',
+      target: { type: 'portal_user', id: puId },
+      after: { email, name: displayName, portal_role: pRole, department: department || 'General' },
+    });
 
     res.json({ ...rows[0], email_sent: emailSent });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -197,6 +203,12 @@ router.delete('/portal-users/:id', requireAdmin, async (req, res) => {
     );
 
     await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'portal_revoked', detail: `Portal access revoked for ${pu.email}` });
+    recordAudit(req, {
+      action: 'portal_user.revoked',
+      target: { type: 'portal_user', id: pu.id },
+      before: { email: pu.email, portal_role: pu.portal_role, status: pu.status },
+      after:  { status: 'inactive' },
+    });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
