@@ -44,6 +44,8 @@ const salarySlipRoutes       = require('./routes/salarySlip');
 const integrationsRoutes     = require('./routes/integrations');
 const setupRoutes            = require('./routes/setup');
 const auditRoutes            = require('./routes/audit');
+const billingRoutes          = require('./routes/billing');
+const polarWebhookRoutes     = require('./routes/webhooks/polar');
 const { router: googleAuthRoutes } = require('./routes/googleAuth');
 
 const app = express();
@@ -68,6 +70,11 @@ app.use(cors({
   },
   exposedHeaders: ['X-Tenant'],
 }));
+// Polar webhooks need the RAW body for signature verification — MUST be
+// registered before express.json() so the JSON parser doesn't consume
+// (and re-stringify) the bytes the HMAC was computed over.
+app.use('/webhooks', polarWebhookRoutes);
+
 app.use(express.json());
 
 // Slack — parse slash command bodies
@@ -116,6 +123,7 @@ app.use('/api', salarySlipRoutes);
 app.use('/api', integrationsRoutes);
 app.use('/api', setupRoutes);
 app.use('/api', auditRoutes);
+app.use('/api', billingRoutes);
 app.use('/api', googleAuthRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));
