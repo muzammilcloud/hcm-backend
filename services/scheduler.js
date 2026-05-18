@@ -342,9 +342,9 @@ function scheduleReports() {
 }
 
 // ─── Tenant lifecycle ────────────────────────────────────────────────────────
-// Demo plan: 7-day trial.  After trial_ends_at:
+// Demo plan: 14-day trial. After trial_ends_at:
 //   - mark 'expired' (login still works for 7 more days, read-only ideally)
-//   - 7 days later (14 days post-signup): hard-delete tenant DB
+//   - 7 days later (21 days post-signup): hard-delete tenant DB
 async function runTenantLifecycle() {
   try {
     const { getPlatformDB } = require('../db');

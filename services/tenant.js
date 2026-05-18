@@ -135,7 +135,7 @@ async function listTenants({ status, plan, limit = 100, offset = 0 } = {}) {
 // Provisioning
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEMO_TRIAL_DAYS = Number(process.env.DEMO_TRIAL_DAYS) || 7;
+const DEMO_TRIAL_DAYS = Number(process.env.DEMO_TRIAL_DAYS) || 14;
 
 async function provisionTenant({
   slug,
