@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { getPlatformDB } = require('../db');
-const { createCheckout, getCustomerPortalUrl, setAutoRenew, isConfigured } = require('../services/billing');
+const { createCheckout, getCustomerPortalUrl, setAutoRenew, setAddon, isConfigured } = require('../services/billing');
 const { PRICE_IDS, ADDON_PRICE_IDS } = require('../lib/polarConstants');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +93,30 @@ router.get('/billing/state', requireAdmin, async (req, res, next) => {
         founding_until: tenant.founding_until,
       },
     });
+  } catch (e) { next(e); }
+});
+
+// POST /api/billing/addons — turn an add-on on or off on the current sub.
+// Body: { addon: 'desktop_standard', enabled: bool }
+router.post('/billing/addons', requireAdmin, async (req, res, next) => {
+  try {
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'Billing is not configured on this server yet.' });
+    }
+    const tenant = await loadTenant(req);
+    if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
+    if (!tenant.polar_subscription_id) {
+      return res.status(400).json({
+        error: 'Start a plan first — add-ons attach to an active subscription.',
+        code:  'NO_SUBSCRIPTION',
+      });
+    }
+    const addon   = String(req.body?.addon || '');
+    const enabled = !!req.body?.enabled;
+    if (!addon) return res.status(400).json({ error: 'addon is required.' });
+
+    const result = await setAddon(tenant, addon, enabled);
+    res.json({ ...result, pending_sync: !result.no_change });
   } catch (e) { next(e); }
 });
 

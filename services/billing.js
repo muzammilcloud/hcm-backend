@@ -1,4 +1,4 @@
-const { getPlatformDB } = require('../db');
+const { getPlatformDB, getTenantDB, tenantContext } = require('../db');
 const {
   POLAR_ENV,
   POLAR_ACCESS_TOKEN,
@@ -24,6 +24,49 @@ const {
 // the rollout. Caller checks `isConfigured()` first if it needs to render
 // a "Billing not configured" message rather than calling and catching.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Subscription-shape helpers ─────────────────────────────────────────────
+// Polar can return a subscription with the primary product as sub.priceId
+// /sub.price.id, OR as a list of items / prices for multi-product subs (e.g.
+// base plan + add-on). Defensive flatten so callers don't have to know which.
+function extractPriceIds(sub) {
+  if (!sub) return [];
+  const out = new Set();
+  if (sub.priceId) out.add(sub.priceId);
+  if (sub.price?.id) out.add(sub.price.id);
+  if (Array.isArray(sub.items)) {
+    for (const it of sub.items) {
+      if (it.priceId) out.add(it.priceId);
+      if (it.price?.id) out.add(it.price.id);
+      if (it.productPriceId) out.add(it.productPriceId);
+    }
+  }
+  if (Array.isArray(sub.prices)) {
+    for (const p of sub.prices) if (p?.id) out.add(p.id);
+  }
+  if (Array.isArray(sub.productPriceIds)) {
+    for (const id of sub.productPriceIds) if (id) out.add(id);
+  }
+  return [...out].filter(Boolean);
+}
+
+function subscriptionHasAddon(sub, addonKey) {
+  const target = ADDON_PRICE_IDS[addonKey];
+  if (!target) return false;
+  return extractPriceIds(sub).includes(target);
+}
+
+// Resolve a tenant by id without going through tenant middleware. Used by
+// the webhook handler (no req context) to figure out which DB to switch to.
+async function loadTenantById(tenantId) {
+  const platform = getPlatformDB();
+  const [rows] = await platform.execute(
+    `SELECT id, slug, db_name, company_name, contact_email,
+            polar_customer_id, polar_subscription_id
+     FROM tenants WHERE id = ? LIMIT 1`, [tenantId]
+  );
+  return rows[0] || null;
+}
 
 let _polar = null;
 function getPolar() {
@@ -242,7 +285,12 @@ async function onSubscriptionUpserted(tenantId, sub) {
   );
 
   // First-paid claim: if this is the first time we see an active sub for
-  // this tenant, set first_paid_at and try to claim a founding slot.
+  // this tenant, set first_paid_at. We attempt the founding-slot claim ONLY
+  // if the subscription includes the desktop add-on — the founding rate
+  // applies to the desktop add-on price specifically, not to base plans.
+  // Without this constraint, a tenant subscribing to plain Growth would
+  // consume a slot they can't benefit from, locking out a later founding-
+  // eligible customer.
   if (sub.status === 'active') {
     const [rows] = await platform.execute(
       'SELECT first_paid_at FROM tenants WHERE id = ?', [tenantId]
@@ -255,11 +303,27 @@ async function onSubscriptionUpserted(tenantId, sub) {
           'UPDATE tenants SET first_paid_at = NOW() WHERE id = ? AND first_paid_at IS NULL',
           [tenantId]
         );
-        await claimFoundingSlot(tenantId, conn);
+        if (subscriptionHasAddon(sub, 'desktop_standard')) {
+          await claimFoundingSlot(tenantId, conn);
+        }
         await conn.commit();
       } catch (e) {
         await conn.rollback();
         throw e;
+      } finally {
+        conn.release();
+      }
+    } else if (rows.length && rows[0].first_paid_at && subscriptionHasAddon(sub, 'desktop_standard')) {
+      // Add-on was added LATER (after first paid) via subscription.updated.
+      // Still attempt the slot claim — they might have been first-paid as
+      // a base-plan-only customer and only now qualify.
+      const conn = await platform.getConnection();
+      try {
+        await conn.beginTransaction();
+        await claimFoundingSlot(tenantId, conn);
+        await conn.commit();
+      } catch (e) {
+        await conn.rollback();
       } finally {
         conn.release();
       }
@@ -350,10 +414,104 @@ async function onSubscriptionPastDue(tenantId, sub) {
            ) WHERE id = ?`, [tenantId]
         );
       }
+
+      // Also fire a Slack DM to the same contact_email user if their
+      // workspace has Slack configured. Best-effort — never block the email
+      // path.
+      await sendPaymentFailedSlackDM(tenantId, t).catch(e =>
+        console.error('[billing] payment-failed Slack DM failed:', e.message)
+      );
     }
   } catch (e) {
     console.error('[billing] day-0 dunning email failed:', e.message);
   }
+}
+
+// Wrap a Slack chat.postMessage to the contact_email user. Runs inside the
+// tenant's AsyncLocalStorage context so getSlackCreds() reads the tenant's
+// own Slack bot token (or env fallback). Skips silently if the tenant
+// hasn't connected Slack or if the contact's email doesn't map to a Slack
+// user in the workspace.
+async function sendPaymentFailedSlackDM(tenantId, tenantRow) {
+  const tenant = await loadTenantById(tenantId);
+  if (!tenant?.db_name || !tenantRow?.contact_email) return;
+
+  const portalUrl = await getCustomerPortalUrl({ polar_customer_id: tenant.polar_customer_id });
+  const billingUrl = portalUrl || `https://${tenant.slug}.${process.env.APEX_DOMAIN || 'tickin.pro'}/?tab=billing`;
+
+  await tenantContext.run(
+    { dbName: tenant.db_name, slug: tenant.slug, tenantId: tenant.id },
+    async () => {
+      try {
+        const { getSlackUserIdByEmail, sendSlackDM } = require('./slack');
+        const userId = await getSlackUserIdByEmail(tenantRow.contact_email);
+        if (!userId) {
+          console.log(`[billing] no Slack user for ${tenantRow.contact_email}, skipping DM`);
+          return;
+        }
+        const text = `Heads up — the last payment for ${tenantRow.company_name || 'your Tickin workspace'} didn't go through. Update your payment method to keep things running.`;
+        const blocks = [
+          { type: 'header', text: { type: 'plain_text', text: '⚠ Payment failed — your Tickin workspace' } },
+          { type: 'section', text: { type: 'mrkdwn', text: `We tried to charge the card on file for *${tenantRow.company_name || 'your workspace'}* and it failed. Update your payment method to avoid a workspace pause in 8 days.` } },
+          { type: 'actions', elements: [{
+            type: 'button',
+            style: 'primary',
+            text: { type: 'plain_text', text: 'Update payment method' },
+            url: billingUrl,
+          }] },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: 'Your data is safe; only access pauses until billing is current.' }] },
+        ];
+        await sendSlackDM(userId, text, blocks);
+        console.log(`[billing] payment-failed Slack DM sent to ${tenantRow.contact_email}`);
+      } catch (e) {
+        // Common causes: tenant has no Slack integration configured, or the
+        // contact_email user isn't in their Slack workspace.
+        console.error('[billing] sendPaymentFailedSlackDM inner:', e.message);
+      }
+    }
+  );
+}
+
+// Add or remove an add-on on the tenant's existing Polar subscription.
+// Polar will prorate the charge for the rest of the current period and
+// fire subscription.updated which our webhook handler will mirror back
+// into tenants.addons.
+//
+// NOTE: Polar's exact API shape for "modify the price list of an existing
+// subscription" varies. The most common pattern is to send the desired
+// final productPriceIds list to subscriptions.update. If your Polar product
+// is configured for customer-managed seats / requires checkout for add-ons,
+// this call may reject — in that case fall back to creating a fresh
+// checkout for just the add-on price (Polar combines onto the existing sub).
+async function setAddon(tenant, addonKey, enabled) {
+  const polar = getPolar();
+  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!tenant?.polar_subscription_id) {
+    throw new Error('No active subscription to attach the add-on to.');
+  }
+  const addonPriceId = ADDON_PRICE_IDS[addonKey];
+  if (!addonPriceId) {
+    throw new Error(`Unknown add-on: ${addonKey}`);
+  }
+
+  // Pull current sub from Polar, compute the desired final price list.
+  const current = await polar.subscriptions.get({ id: tenant.polar_subscription_id });
+  const currentPriceIds = extractPriceIds(current);
+  const hasIt = currentPriceIds.includes(addonPriceId);
+
+  if (enabled && hasIt)   return { addon: addonKey, enabled: true,  no_change: true };
+  if (!enabled && !hasIt) return { addon: addonKey, enabled: false, no_change: true };
+
+  const newPriceIds = enabled
+    ? [...currentPriceIds, addonPriceId]
+    : currentPriceIds.filter(id => id !== addonPriceId);
+
+  await polar.subscriptions.update({
+    id: tenant.polar_subscription_id,
+    productPriceIds: newPriceIds,
+  });
+
+  return { addon: addonKey, enabled, no_change: false };
 }
 
 // Auto-renewal toggle: turn off (= cancel at period end) or back on
@@ -403,6 +561,62 @@ async function logBillingEvent({ tenantId, type, polarEventId, payload }) {
     );
   } catch (e) {
     console.error('[billing] logBillingEvent failed:', e.message);
+  }
+
+  // Mirror billing-relevant events into the tenant's audit_logs table so the
+  // sys-admin sees them in the existing Workspace → Audit log viewer
+  // alongside their own actions. The platform-level billing_events table
+  // remains the source of truth for the raw event payload.
+  if (!tenantId || !type) return;
+  if (!type.startsWith('subscription.') && !type.startsWith('order.')) return;
+
+  try {
+    const tenant = await loadTenantById(tenantId);
+    if (!tenant?.db_name) return;
+    const pool = getTenantDB(tenant.db_name);
+
+    // Map Polar event type → readable action label for the audit row.
+    const ACTION_MAP = {
+      'subscription.created':    'billing.subscription.created',
+      'subscription.active':     'billing.subscription.active',
+      'subscription.updated':    'billing.subscription.updated',
+      'subscription.canceled':   'billing.auto_renewal.disabled',
+      'subscription.uncanceled': 'billing.auto_renewal.enabled',
+      'subscription.revoked':    'billing.subscription.revoked',
+      'subscription.past_due':   'billing.payment.failed',
+      'order.created':           'billing.order.created',
+      'order.paid':              'billing.payment.succeeded',
+      'order.refunded':          'billing.order.refunded',
+    };
+    const action = ACTION_MAP[type] || `billing.${type}`;
+
+    // Build a compact after-snapshot (drop the huge raw payload).
+    const sub = payload?.data || {};
+    const snapshot = {
+      status:               sub.status || null,
+      price_id:             sub.priceId || sub.price?.id || null,
+      current_period_end:   sub.currentPeriodEnd || null,
+      cancel_at_period_end: sub.cancelAtPeriodEnd || false,
+      customer_id:          sub.customerId || sub.customer?.id || null,
+      subscription_id:      sub.id || null,
+    };
+
+    await pool.execute(
+      `INSERT INTO audit_logs
+         (actor_user_id, actor_email, actor_role, action,
+          target_type, target_id, before_json, after_json, ip, user_agent)
+       VALUES (?, ?, 'system', ?, 'subscription', ?, NULL, ?, NULL, ?)`,
+      [
+        null,                              // no human actor for webhooks
+        'polar-webhook',
+        action,
+        sub.id || null,
+        JSON.stringify(snapshot),
+        polarEventId ? `polar:${polarEventId}` : null,
+      ]
+    );
+  } catch (e) {
+    console.error('[billing] mirror to tenant audit_logs failed:', e.message);
   }
 }
 
@@ -462,5 +676,7 @@ module.exports = {
   claimFoundingSlot,
   syncSeatCount,
   setAutoRenew,
+  setAddon,
+  subscriptionHasAddon,
   isConfigured,
 };
