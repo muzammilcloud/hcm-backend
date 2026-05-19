@@ -4,12 +4,30 @@ const { getDB, generateToken, logEvent } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { sendInviteEmail } = require('../services/email');
 const { recordAudit } = require('../services/audit');
+const { rejectIfAtSeatCap, getCurrentSeatCount } = require('../services/seatLimits');
+const { syncSeatCount } = require('../services/billing');
+
+// Fire-and-forget seat sync after a mutation. Recomputes the live count
+// (cheap, indexed COUNT) and pushes to billing. Never awaited by the
+// route — the employee response shouldn't wait on a Polar API call.
+function fireSeatSync(req) {
+  if (!req.tenant?.id) return;
+  setImmediate(async () => {
+    try {
+      const seats = await getCurrentSeatCount();
+      await syncSeatCount(req.tenant.id, seats);
+    } catch (e) {
+      console.error('[employees] post-mutation seat sync failed:', e.message);
+    }
+  });
+}
 
 // POST /api/employees/data — Add employee record only (no invite)
 router.post('/employees/data', requireAdmin, async (req, res) => {
   const { name, email, role, department, date_of_birth, join_date, first_name, last_name, father_name, gender, cnic, emp_code, marital_status, employment_status, reports_to } = req.body;
   const displayName = (first_name && last_name) ? `${first_name} ${last_name}` : (name || '');
   if (!displayName || !email) return res.status(400).json({ error: 'Name and email required' });
+  if (await rejectIfAtSeatCap(req, res)) return;
   try {
     const pool = await getDB();
     const [result] = await pool.execute(
@@ -18,6 +36,7 @@ router.post('/employees/data', requireAdmin, async (req, res) => {
     );
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [result.insertId]);
     await logEvent(pool, { employee_id: result.insertId, employee_name: displayName, department: department || 'General', role: role || 'Employee', event: 'added', detail: `Employee record created (no invite)` });
+    fireSeatSync(req);
     res.json({ ...rows[0], has_pending_invite: 0 });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Email already exists' });
@@ -30,6 +49,7 @@ router.post('/employees', requireAdmin, async (req, res) => {
   const { name, email, role, department, date_of_birth, join_date, first_name, last_name, father_name, gender, cnic, emp_code, marital_status, employment_status, reports_to } = req.body;
   const displayName = (first_name && last_name) ? `${first_name} ${last_name}` : (name || '');
   if (!displayName || !email) return res.status(400).json({ error: 'Name and email required' });
+  if (await rejectIfAtSeatCap(req, res)) return;
   try {
     const pool = await getDB();
 
@@ -65,6 +85,7 @@ router.post('/employees', requireAdmin, async (req, res) => {
 
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [empId]);
     await logEvent(pool, { employee_id: empId, employee_name: empName, department: rows[0].department, role: rows[0].role, event: 'invited', detail: `Invited via email to ${email}` });
+    fireSeatSync(req);
     res.json({ ...rows[0], email_sent: emailSent, invite_token: inviteToken, has_pending_invite: 1 });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -158,6 +179,7 @@ router.delete('/employees/:id', requireAdmin, async (req, res) => {
         before: { id: emp.id, name: emp.name, email: emp.email, role: emp.role, department: emp.department, emp_code: emp.emp_code, days_served: emp.days_served, total_hours: emp.total_hours },
       });
     }
+    fireSeatSync(req);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -139,15 +139,30 @@ async function failSignup(res, signupId, msg, status = 400) {
 // GET /api/tenant/whoami — used by the FE on a tenant subdomain to display
 // the workspace's branding. Tenant resolved by middleware via subdomain or
 // X-Tenant header. If no tenant context is set, returns 404.
+//
+// Computes access_restricted server-side so the FE has a single boolean
+// to gate the paywall against — no need to re-derive trial expiry, polar
+// status, and tenant status in the client.
 router.get('/tenant/whoami', async (req, res) => {
   if (!req.tenant) return res.status(404).json({ error: 'No tenant resolved' });
   const t = req.tenant;
+
+  const trialExpired = t.trial_ends_at && new Date(t.trial_ends_at) <= new Date();
+  const hasActivePolarSub =
+    t.polar_status === 'active' || t.polar_status === 'trialing';
+  const accessRestricted =
+    t.status === 'expired' ||
+    t.status === 'suspended' ||
+    (trialExpired && !hasActivePolarSub);
+
   res.json({
-    slug:          t.slug,
-    company_name:  t.company_name,
-    status:        t.status,
-    plan:          t.plan,
-    trial_ends_at: t.trial_ends_at,
+    slug:              t.slug,
+    company_name:      t.company_name,
+    status:            t.status,
+    plan:              t.plan,
+    trial_ends_at:     t.trial_ends_at,
+    polar_status:      t.polar_status || null,
+    access_restricted: accessRestricted,
   });
 });
 

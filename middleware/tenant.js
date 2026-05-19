@@ -65,11 +65,30 @@ async function tenantMiddleware(req, res, next) {
   if (!tenant) {
     return res.status(404).json({ error: 'Workspace not found' });
   }
-  if (tenant.status === 'suspended') {
-    return res.status(402).json({ error: 'Workspace suspended', reason: 'billing' });
-  }
-  if (tenant.status === 'deleted' || tenant.status === 'expired') {
+
+  // Routes that must still work for expired / suspended tenants so the
+  // admin can subscribe / reactivate from the paywall. Everything else
+  // (employees, time, salary, etc.) is blocked until billing is current.
+  const isBillingPath  = req.path.startsWith('/api/billing');
+  const isAuthPath     = req.path.startsWith('/api/login')
+                       || req.path.startsWith('/api/auth')
+                       || req.path.startsWith('/api/logout')
+                       || req.path.startsWith('/api/employee/login')
+                       || req.path.startsWith('/api/employee/logout');
+  // Tenant context already attached below; some platform-prefixed routes
+  // are bypassed earlier in this middleware, but /api/tenant/whoami runs
+  // under tenant context to compute access_restricted from req.tenant.
+  const allowedWhenLocked = isBillingPath || isAuthPath;
+
+  if (tenant.status === 'deleted') {
     return res.status(410).json({ error: 'Workspace no longer available' });
+  }
+  if ((tenant.status === 'suspended' || tenant.status === 'expired') && !allowedWhenLocked) {
+    return res.status(402).json({
+      error: 'Workspace locked',
+      reason: 'billing',
+      code: tenant.status === 'expired' ? 'TRIAL_EXPIRED' : 'SUSPENDED',
+    });
   }
 
   req.tenant = tenant;

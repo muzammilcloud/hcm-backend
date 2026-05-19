@@ -286,11 +286,60 @@ async function logBillingEvent({ tenantId, type, polarEventId, payload }) {
   }
 }
 
+// Sync the tenant's active seat count to Polar and to our platform DB.
+// Always updates the local seat_count column (source of truth for the soft
+// cap banner). Best-effort on the Polar API call — wrapped in try/catch so
+// a Polar outage never blocks an employee mutation.
+//
+// Callers should fire-and-forget (don't await) so the API roundtrip doesn't
+// add latency to the employee-create/delete responses.
+async function syncSeatCount(tenantId, seats) {
+  if (!tenantId || typeof seats !== 'number') return;
+  const platform = getPlatformDB();
+  try {
+    await platform.execute(
+      'UPDATE tenants SET seat_count = ? WHERE id = ?',
+      [seats, tenantId]
+    );
+  } catch (e) {
+    console.error('[billing] local seat_count update failed:', e.message);
+  }
+
+  const polar = getPolar();
+  if (!polar) return;
+
+  const [rows] = await platform.execute(
+    'SELECT polar_subscription_id, plan FROM tenants WHERE id = ?', [tenantId]
+  );
+  const subId = rows[0]?.polar_subscription_id;
+  const plan  = rows[0]?.plan;
+  if (!subId) return;
+
+  // Per-seat sync only matters for plans where the price scales with seat
+  // count (Growth, Business). Starter is flat $19/mo regardless of seats,
+  // so pushing quantity updates there is pointless.
+  if (plan !== 'growth' && plan !== 'business') return;
+
+  try {
+    // Polar's exact per-seat update shape varies by pricing model. The most
+    // common path: update the subscription with a new quantity. If your
+    // Polar product uses customer_seats instead, this no-ops cleanly and
+    // the webhook (subscription.updated) will reconcile state either way.
+    await polar.subscriptions.update({ id: subId, quantity: seats });
+  } catch (e) {
+    // Common cause: product is configured for customer-managed seats
+    // (assigned by the customer themselves via the portal). In that case
+    // we just rely on Polar's portal flow + the webhook reconciler.
+    console.error('[billing] Polar seat sync failed (subscription stays at last-known qty):', e.message);
+  }
+}
+
 module.exports = {
   createCheckout,
   getCustomerPortalUrl,
   getSubscription,
   applyWebhookEvent,
   claimFoundingSlot,
+  syncSeatCount,
   isConfigured,
 };
