@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { getPlatformDB } = require('../db');
-const { createCheckout, getCustomerPortalUrl, isConfigured } = require('../services/billing');
+const { createCheckout, getCustomerPortalUrl, setAutoRenew, isConfigured } = require('../services/billing');
 const { PRICE_IDS, ADDON_PRICE_IDS } = require('../lib/polarConstants');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,8 @@ async function loadTenant(req) {
   const [rows] = await platform.execute(
     `SELECT id, slug, company_name, contact_email, plan, billing_cycle, plan_currency,
             seat_count, addons, polar_customer_id, polar_subscription_id, polar_status,
-            founding_customer, founding_until, first_paid_at, trial_ends_at, status
+            founding_customer, founding_until, first_paid_at, trial_ends_at, status,
+            past_due_at, current_period_end, cancel_at_period_end
      FROM tenants WHERE id = ? LIMIT 1`,
     [req.tenant.id]
   );
@@ -50,6 +51,15 @@ router.get('/billing/state', requireAdmin, async (req, res, next) => {
       liveSeatCount = Number(rows[0]?.n || 0);
     } catch (_) { /* fallback to stored value */ }
 
+    // Compute grace-period state so the FE doesn't have to.
+    const inGracePeriod = !!tenant.past_due_at;
+    const graceEndsAt = tenant.past_due_at
+      ? new Date(new Date(tenant.past_due_at).getTime() + 8 * 86_400_000)
+      : null;
+    const graceDaysRemaining = graceEndsAt
+      ? Math.max(0, Math.ceil((graceEndsAt - new Date()) / 86_400_000))
+      : null;
+
     res.json({
       configured:        isConfigured(),
       tenant: {
@@ -70,12 +80,42 @@ router.get('/billing/state', requireAdmin, async (req, res, next) => {
         first_paid_at:         tenant.first_paid_at,
         trial_ends_at:         tenant.trial_ends_at,
         tenant_status:         tenant.status,
+        current_period_end:    tenant.current_period_end,
+        auto_renew:            !tenant.cancel_at_period_end,
       },
+      grace_period: inGracePeriod ? {
+        past_due_at:       tenant.past_due_at,
+        ends_at:           graceEndsAt,
+        days_remaining:    graceDaysRemaining,
+      } : null,
       founding: {
         is_founding:    !!tenant.founding_customer,
         founding_until: tenant.founding_until,
       },
     });
+  } catch (e) { next(e); }
+});
+
+// POST /api/billing/auto-renewal — toggle auto-renewal on/off.
+// Body: { enabled: bool }
+// Off = cancel at current period end (still has access until then).
+// On  = uncancel (sub will renew normally).
+router.post('/billing/auto-renewal', requireAdmin, async (req, res, next) => {
+  try {
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'Billing is not configured on this server yet.' });
+    }
+    const tenant = await loadTenant(req);
+    if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
+    if (!tenant.polar_subscription_id) {
+      return res.status(400).json({ error: 'No active subscription to update.' });
+    }
+    const enabled = !!req.body?.enabled;
+    await setAutoRenew(tenant, enabled);
+    // Polar will fire subscription.canceled / subscription.uncanceled and our
+    // webhook handler will mirror state. Return the requested state so the UI
+    // can flip immediately without waiting for the round-trip.
+    res.json({ auto_renew: enabled, pending_sync: true });
   } catch (e) { next(e); }
 });
 

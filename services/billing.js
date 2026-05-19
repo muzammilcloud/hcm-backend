@@ -158,11 +158,20 @@ async function applyWebhookEvent(event) {
         await onSubscriptionUpserted(tenantId, data);
         break;
       case 'subscription.canceled':
+        // The user toggled "cancel at period end" — they still have access
+        // until current_period_end. Don't suspend; just mirror the state.
+        await onSubscriptionCanceledAtPeriodEnd(tenantId, data);
+        break;
       case 'subscription.revoked':
-        await onSubscriptionCanceled(tenantId, data);
+        // Access has actually ended (period over, or immediate revoke).
+        await onSubscriptionRevoked(tenantId, data);
         break;
       case 'subscription.uncanceled':
+        // User re-enabled auto-renewal before period ended.
         await onSubscriptionReinstated(tenantId, data);
+        break;
+      case 'subscription.past_due':
+        await onSubscriptionPastDue(tenantId, data);
         break;
       case 'order.created':
       case 'order.paid':
@@ -194,6 +203,16 @@ async function onSubscriptionUpserted(tenantId, sub) {
   const billing_cycle = tierInfo?.cycle || null;
   const plan = tierInfo?.tier || null;
 
+  // current_period_end + cancel_at_period_end mirrored so the FE can render
+  // "cancels on X" / "renews on X" without a Polar API round-trip.
+  const currentPeriodEnd = sub.currentPeriodEnd
+    ? new Date(sub.currentPeriodEnd) : null;
+  const cancelAtPeriodEnd = sub.cancelAtPeriodEnd ? 1 : 0;
+
+  // When a subscription returns to active, clear any past-due bookkeeping
+  // so future dunning runs don't re-fire on stale state.
+  const clearDunning = (sub.status === 'active' || sub.status === 'trialing');
+
   await platform.execute(
     `UPDATE tenants
      SET polar_customer_id     = COALESCE(?, polar_customer_id),
@@ -201,6 +220,10 @@ async function onSubscriptionUpserted(tenantId, sub) {
          polar_status          = ?,
          plan                  = COALESCE(?, plan),
          billing_cycle         = COALESCE(?, billing_cycle),
+         current_period_end    = ?,
+         cancel_at_period_end  = ?,
+         past_due_at           = CASE WHEN ? THEN NULL ELSE past_due_at END,
+         dunning_emails_sent   = CASE WHEN ? THEN NULL ELSE dunning_emails_sent END,
          status                = CASE WHEN ? IN ('active','trialing') THEN 'active' ELSE status END
      WHERE id = ?`,
     [
@@ -209,6 +232,10 @@ async function onSubscriptionUpserted(tenantId, sub) {
       sub.status || 'unknown',
       plan,
       billing_cycle,
+      currentPeriodEnd,
+      cancelAtPeriodEnd,
+      clearDunning ? 1 : 0,
+      clearDunning ? 1 : 0,
       sub.status || 'unknown',
       tenantId,
     ]
@@ -240,12 +267,30 @@ async function onSubscriptionUpserted(tenantId, sub) {
   }
 }
 
-async function onSubscriptionCanceled(tenantId, sub) {
+// subscription.canceled = user toggled cancel-at-period-end. Access STAYS
+// until current_period_end; only mirror state, don't suspend.
+async function onSubscriptionCanceledAtPeriodEnd(tenantId, sub) {
+  if (!tenantId) return;
+  const platform = getPlatformDB();
+  const periodEnd = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null;
+  await platform.execute(
+    `UPDATE tenants
+     SET polar_status         = ?,
+         cancel_at_period_end = 1,
+         current_period_end   = COALESCE(?, current_period_end)
+     WHERE id = ?`,
+    [sub?.status || 'canceled', periodEnd, tenantId]
+  );
+}
+
+// subscription.revoked = access has actually ended (period over OR immediate
+// revoke). This is when we lock the tenant out of the dashboard.
+async function onSubscriptionRevoked(tenantId, sub) {
   if (!tenantId) return;
   const platform = getPlatformDB();
   await platform.execute(
     `UPDATE tenants SET polar_status = ?, status = 'suspended' WHERE id = ?`,
-    [sub?.status || 'canceled', tenantId]
+    [sub?.status || 'revoked', tenantId]
   );
 }
 
@@ -253,9 +298,84 @@ async function onSubscriptionReinstated(tenantId, sub) {
   if (!tenantId) return;
   const platform = getPlatformDB();
   await platform.execute(
-    `UPDATE tenants SET polar_status = ?, status = 'active' WHERE id = ?`,
+    `UPDATE tenants
+     SET polar_status         = ?,
+         cancel_at_period_end = 0,
+         status               = 'active'
+     WHERE id = ?`,
     [sub?.status || 'active', tenantId]
   );
+}
+
+// subscription.past_due = a renewal payment failed. Tenant enters the
+// 7-day grace period. We set past_due_at NOW(), fire the day-0 dunning
+// email immediately, and let the nightly scheduler handle day-2 / day-5
+// reminders + day-8 suspension.
+async function onSubscriptionPastDue(tenantId, sub) {
+  if (!tenantId) return;
+  const platform = getPlatformDB();
+  await platform.execute(
+    `UPDATE tenants
+     SET polar_status = ?,
+         past_due_at  = COALESCE(past_due_at, NOW()),
+         dunning_emails_sent = COALESCE(dunning_emails_sent, JSON_ARRAY())
+     WHERE id = ?`,
+    [sub?.status || 'past_due', tenantId]
+  );
+
+  // Send the day-0 dunning email immediately (don't wait for the scheduler).
+  // We mark day 0 as sent only after the email succeeds.
+  try {
+    const [rows] = await platform.execute(
+      `SELECT contact_email, company_name, dunning_emails_sent
+       FROM tenants WHERE id = ?`, [tenantId]
+    );
+    const t = rows[0];
+    const already = Array.isArray(t?.dunning_emails_sent) ? t.dunning_emails_sent : [];
+    if (t && !already.includes(0)) {
+      const { sendDunningEmail } = require('./email');
+      const portalUrl = await getCustomerPortalUrl({
+        polar_customer_id: sub?.customerId || sub?.customer?.id,
+      });
+      const sent = await sendDunningEmail({
+        to: t.contact_email,
+        companyName: t.company_name,
+        daysSinceFailure: 0,
+        billingUrl: portalUrl || `https://${(process.env.APEX_DOMAIN || 'tickin.pro')}/`,
+      });
+      if (sent) {
+        await platform.execute(
+          `UPDATE tenants SET dunning_emails_sent = JSON_ARRAY_APPEND(
+             COALESCE(dunning_emails_sent, JSON_ARRAY()), '$', 0
+           ) WHERE id = ?`, [tenantId]
+        );
+      }
+    }
+  } catch (e) {
+    console.error('[billing] day-0 dunning email failed:', e.message);
+  }
+}
+
+// Auto-renewal toggle: turn off (= cancel at period end) or back on
+// (= uncancel). Both push to Polar and the resulting webhook syncs our DB.
+async function setAutoRenew(tenant, autoRenew) {
+  const polar = getPolar();
+  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!tenant?.polar_subscription_id) {
+    throw new Error('No active subscription to update.');
+  }
+  if (autoRenew) {
+    // Uncancel. Polar SDK: polar.subscriptions.update({ id, cancelAtPeriodEnd: false })
+    return polar.subscriptions.update({
+      id: tenant.polar_subscription_id,
+      cancelAtPeriodEnd: false,
+    });
+  } else {
+    return polar.subscriptions.update({
+      id: tenant.polar_subscription_id,
+      cancelAtPeriodEnd: true,
+    });
+  }
 }
 
 async function onOrderPaid(tenantId, _order) {
@@ -341,5 +461,6 @@ module.exports = {
   applyWebhookEvent,
   claimFoundingSlot,
   syncSeatCount,
+  setAutoRenew,
   isConfigured,
 };

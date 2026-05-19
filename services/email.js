@@ -526,6 +526,65 @@ async function sendAnniversaryGreetingEmail({ name, email, years }) {
   } catch (e) { console.error(`Anniversary greeting failed for ${name}:`, e.message); }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dunning emails. Three variants on a single shared layout: day-0 (payment
+// just failed), day-2 (heads-up), day-5 (final warning). Day-0 fires from
+// the subscription.past_due webhook handler; day-2 and day-5 fire from the
+// scheduler's nightly dunning runner.
+// ─────────────────────────────────────────────────────────────────────────────
+async function sendDunningEmail({ to, companyName, daysSinceFailure, billingUrl, graceEndsAt }) {
+  if (!to) return false;
+  const variants = {
+    0: {
+      subject: `Action needed — your last Tickin payment didn't go through`,
+      title:   `Your last payment didn't go through`,
+      lede:    `We tried to charge the card on file for ${companyName || 'your workspace'} and it failed. This can happen for a number of reasons (expired card, daily limit, bank declined). Update your payment method to keep things running.`,
+      ctaText: `Update payment method`,
+      footer:  `If we can't take payment in the next 7 days, your workspace will pause. Nothing will be deleted; access will just be locked until billing is current.`,
+    },
+    2: {
+      subject: `Reminder: payment still pending for your Tickin workspace`,
+      title:   `Payment still pending`,
+      lede:    `Your last payment for ${companyName || 'your workspace'} hasn't cleared yet. We've been retrying automatically, but the easiest fix is to update your payment method directly.`,
+      ctaText: `Update payment method`,
+      footer:  graceEndsAt
+        ? `Access pauses on ${graceEndsAt} unless this is resolved.`
+        : `Access will be paused soon if payment doesn't clear.`,
+    },
+    5: {
+      subject: `Final notice — your Tickin workspace pauses in 2 days`,
+      title:   `Final notice: 2 days until your workspace pauses`,
+      lede:    `Payment for ${companyName || 'your workspace'} has been outstanding for 5 days. Update your card today or your workspace will be paused on ${graceEndsAt || 'day 8'}. Your data stays safe — only access is paused until billing is current.`,
+      ctaText: `Update payment method now`,
+      footer:  `Need to talk to someone? Reply to this email and we'll help.`,
+    },
+  };
+  const v = variants[daysSinceFailure];
+  if (!v) return false;
+
+  const transporter = await getTransporter();
+  const from = await getFromAddress();
+  const html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;padding:24px;background:#0f172a;color:#e2e8f0;border-radius:12px;">
+      <div style="font-size:11px;font-weight:700;color:#a5b4fc;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:14px;">tickin · billing</div>
+      <h1 style="margin:0 0 12px;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.3px;">${v.title}</h1>
+      <p style="margin:0 0 22px;color:#cbd5e1;font-size:14px;line-height:1.65;">${v.lede}</p>
+      <a href="${billingUrl}" style="display:inline-block;padding:11px 22px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">${v.ctaText}</a>
+      <p style="margin:24px 0 0;color:#94a3b8;font-size:12px;line-height:1.6;">${v.footer}</p>
+      <hr style="border:0;border-top:1px solid #1e293b;margin:24px 0;">
+      <p style="margin:0;color:#64748b;font-size:11px;line-height:1.6;">You're receiving this because billing for your Tickin workspace needs attention. Manage your subscription or contact us at info@tickin.pro.</p>
+    </div>
+  `;
+  try {
+    await transporter.sendMail({ from, to, subject: v.subject, html });
+    console.log(`✅ Dunning email day-${daysSinceFailure} sent to ${to}`);
+    return true;
+  } catch (e) {
+    console.error(`Dunning email day-${daysSinceFailure} failed for ${to}:`, e.message);
+    return false;
+  }
+}
+
 module.exports = {
   transporter,
   sendInviteEmail,
@@ -538,4 +597,5 @@ module.exports = {
   sendBirthdayGreetingEmail,
   sendAnniversaryReminderEmail,
   sendAnniversaryGreetingEmail,
+  sendDunningEmail,
 };

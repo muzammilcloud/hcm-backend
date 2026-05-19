@@ -147,13 +147,20 @@ router.get('/tenant/whoami', async (req, res) => {
   if (!req.tenant) return res.status(404).json({ error: 'No tenant resolved' });
   const t = req.tenant;
 
-  const trialExpired = t.trial_ends_at && new Date(t.trial_ends_at) <= new Date();
-  const hasActivePolarSub =
-    t.polar_status === 'active' || t.polar_status === 'trialing';
+  // tenant.status is the source of truth for access — the scheduler flips
+  // it to 'expired' after the 14-day trial ends without a sub, and to
+  // 'suspended' after the 8-day past-due grace period (or on
+  // subscription.revoked). We just mirror that here.
+  //
+  // Edge case: trial passed but the scheduler hasn't run yet (it runs at
+  // 3 AM UTC). Catch that defensively so the wall doesn't lag a few hours.
+  const trialPassedNoSub = t.trial_ends_at
+    && new Date(t.trial_ends_at) <= new Date()
+    && !['active','trialing','past_due','canceled'].includes(t.polar_status);
   const accessRestricted =
     t.status === 'expired' ||
     t.status === 'suspended' ||
-    (trialExpired && !hasActivePolarSub);
+    trialPassedNoSub;
 
   res.json({
     slug:              t.slug,
@@ -162,6 +169,9 @@ router.get('/tenant/whoami', async (req, res) => {
     plan:              t.plan,
     trial_ends_at:     t.trial_ends_at,
     polar_status:      t.polar_status || null,
+    past_due_at:       t.past_due_at || null,
+    cancel_at_period_end:  !!t.cancel_at_period_end,
+    current_period_end:    t.current_period_end || null,
     access_restricted: accessRestricted,
   });
 });

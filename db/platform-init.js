@@ -104,6 +104,16 @@ async function initPlatformDB() {
     "ADD COLUMN founding_customer     TINYINT(1) NOT NULL DEFAULT 0 AFTER addons",
     "ADD COLUMN founding_until        DATETIME NULL AFTER founding_customer",
     "ADD COLUMN first_paid_at         DATETIME NULL AFTER founding_until",
+    // Past-due dunning state — set when subscription.past_due fires, cleared
+    // when subscription returns to active. dunning_emails_sent is a JSON array
+    // of day-numbers already emailed ([0,2,5]) so the scheduler doesn't
+    // double-send. current_period_end + cancel_at_period_end mirror Polar's
+    // subscription state so the FE can show "cancels on X" without a Polar
+    // API round-trip.
+    "ADD COLUMN past_due_at           DATETIME NULL AFTER first_paid_at",
+    "ADD COLUMN dunning_emails_sent   JSON NULL AFTER past_due_at",
+    "ADD COLUMN current_period_end    DATETIME NULL AFTER dunning_emails_sent",
+    "ADD COLUMN cancel_at_period_end  TINYINT(1) NOT NULL DEFAULT 0 AFTER current_period_end",
   ];
   for (const clause of tenantBillingColumns) {
     try { await db.execute(`ALTER TABLE tenants ${clause}`); } catch (_) { /* already exists */ }

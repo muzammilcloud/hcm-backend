@@ -338,7 +338,86 @@ function scheduleReports() {
     if (hour === 3 && min < 30 && !firedToday('tenantLifecycle', 'UTC')) {
       await runTenantLifecycle();
     }
+
+    // Past-due dunning — every 6 hours, fires day-2/5 reminders and
+    // suspends at day 8. Day-0 fires from the webhook handler.
+    if (hour % 6 === 0 && min < 30 && !firedToday(`dunning-${hour}`, 'UTC')) {
+      await runDunning();
+    }
   }, 30 * 60 * 1000);
+}
+
+// ─── Past-due dunning ────────────────────────────────────────────────────────
+// For every tenant with past_due_at set:
+//   - day 2 from past_due_at → send day-2 reminder (if not already sent)
+//   - day 5 → send day-5 reminder
+//   - day 8 → suspend (status='suspended'), final notice in the suspension UI
+async function runDunning() {
+  try {
+    const { getPlatformDB } = require('../db');
+    const { sendDunningEmail } = require('./email');
+    const { getCustomerPortalUrl } = require('./billing');
+    const platform = getPlatformDB();
+
+    const [tenants] = await platform.execute(`
+      SELECT id, slug, company_name, contact_email,
+             past_due_at, dunning_emails_sent, polar_customer_id, status
+      FROM tenants
+      WHERE past_due_at IS NOT NULL
+        AND status NOT IN ('suspended','deleted')
+    `);
+    if (!tenants.length) return;
+
+    console.log(`[dunning] checking ${tenants.length} tenant(s) in past-due state`);
+
+    for (const t of tenants) {
+      const daysSince = Math.floor((Date.now() - new Date(t.past_due_at).getTime()) / 86_400_000);
+      const already = Array.isArray(t.dunning_emails_sent) ? t.dunning_emails_sent : [];
+
+      // Day 8: stop emailing, suspend access. The wall takes over from here.
+      if (daysSince >= 8) {
+        await platform.execute(
+          `UPDATE tenants SET status = 'suspended' WHERE id = ? AND status = 'active'`,
+          [t.id]
+        );
+        console.log(`[dunning]   ${t.slug}: day ${daysSince} → suspended`);
+        continue;
+      }
+
+      // Pick the next due reminder, if any.
+      let day = null;
+      if (daysSince >= 5 && !already.includes(5))      day = 5;
+      else if (daysSince >= 2 && !already.includes(2)) day = 2;
+      else if (daysSince >= 0 && !already.includes(0)) day = 0; // safety net; day-0 normally fires from the webhook
+      if (day == null) continue;
+
+      try {
+        const portalUrl = await getCustomerPortalUrl({ polar_customer_id: t.polar_customer_id });
+        const graceEndsAt = new Date(new Date(t.past_due_at).getTime() + 8 * 86_400_000)
+          .toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const sent = await sendDunningEmail({
+          to: t.contact_email,
+          companyName: t.company_name,
+          daysSinceFailure: day,
+          billingUrl: portalUrl || `https://${t.slug}.${process.env.APEX_DOMAIN || 'tickin.pro'}/`,
+          graceEndsAt,
+        });
+        if (sent) {
+          await platform.execute(
+            `UPDATE tenants SET dunning_emails_sent = JSON_ARRAY_APPEND(
+               COALESCE(dunning_emails_sent, JSON_ARRAY()), '$', ?
+             ) WHERE id = ?`,
+            [day, t.id]
+          );
+          console.log(`[dunning]   ${t.slug}: day-${day} reminder sent`);
+        }
+      } catch (e) {
+        console.error(`[dunning]   ${t.slug}: day-${day} send failed:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('runDunning failed:', e.message);
+  }
 }
 
 // ─── Tenant lifecycle ────────────────────────────────────────────────────────
@@ -386,4 +465,4 @@ async function runTenantLifecycle() {
   }
 }
 
-module.exports = { sendWeeklyReports, sendMonthlyReports, sendMonthlySalarySlips, sendDailyLeaveReport, scheduleReports, runTenantLifecycle };
+module.exports = { sendWeeklyReports, sendMonthlyReports, sendMonthlySalarySlips, sendDailyLeaveReport, scheduleReports, runTenantLifecycle, runDunning };
