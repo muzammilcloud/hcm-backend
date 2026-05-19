@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "status": "draft",
+    "notes": "Machine-translated starter draft. Native Spanish speaker review required. Spain vs Latin America wording may differ (e.g. 'gestionar' vs 'administrar', 'planilla' vs 'nómina'); pick a target market before finalizing."
+  },
+  "email": {
+    "invite": {
+      "subject": "Te invitan a unirte a {companyName} en Tickin",
+      "preheader": "Establece tu contraseña para activar el acceso a tu espacio de trabajo.",
+      "heading": "Bienvenido a {companyName}",
+      "lede": "Has sido invitado a unirte al espacio de trabajo en Tickin. Haz clic abajo para establecer tu contraseña e iniciar sesión.",
+      "cta": "Establecer contraseña",
+      "expiresNote": "Este enlace de invitación caduca en 7 días."
+    },
+    "passwordReset": {
+      "subject": "Restablece tu contraseña de Tickin",
+      "heading": "Restablecer contraseña",
+      "cta": "Restablecer contraseña",
+      "expiresNote": "Este enlace caduca en 1 hora."
+    },
+    "dunning": {
+      "day0": {
+        "subject": "Acción necesaria — tu último pago de Tickin no se realizó",
+        "title": "Tu último pago no se realizó",
+        "cta": "Actualizar método de pago"
+      },
+      "day5": {
+        "subject": "Último aviso — tu espacio de trabajo de Tickin se pausará en 2 días",
+        "title": "Último aviso: 2 días para que tu espacio de trabajo se pause"
+      }
+    },
+    "common": {
+      "greeting": "Hola {name},",
+      "regards": "— El equipo de Tickin"
+    }
+  },
+  "slack": {
+    "paymentFailed": {
+      "header": "⚠ Pago fallido — tu espacio de trabajo de Tickin",
+      "cta": "Actualizar método de pago"
+    }
+  },
+  "pdf": {
+    "salarySlip": {
+      "title": "Recibo de salario",
+      "employeeName": "Empleado",
+      "designation": "Cargo",
+      "department": "Departamento",
+      "empCode": "ID de empleado",
+      "month": "Período de pago",
+      "daysWorked": "Días trabajados",
+      "earnings": "Ingresos",
+      "deductions": "Deducciones",
+      "grossSalary": "Salario bruto",
+      "netSalary": "Salario neto",
+      "providentFund": "Fondo de pensiones",
+      "withholdingTax": "Retención de impuestos",
+      "totalDeductions": "Deducciones totales",
+      "generatedOn": "Generado el {date}",
+      "confidential": "Confidencial — solo para el empleado mencionado."
+    }
+  }
+}

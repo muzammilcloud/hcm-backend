@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="{{LOCALE}}">
+<head>
+<meta charset="utf-8">
+<title>{{SLIP_TITLE}} — {{EMP_NAME}}</title>
+<style>
+  /* CJK fallback chain — the Docker image installs `font-noto-cjk` which
+     provides Noto Sans JP / SC / KR. Chromium picks the right glyph
+     automatically based on the character. System fonts handle Latin. */
+  :root {
+    --ink:        #0f172a;
+    --ink-soft:   #475569;
+    --ink-faint:  #94a3b8;
+    --border:     #e2e8f0;
+    --accent:     #4f46e5;
+    --table-alt:  #f8fafc;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: "Noto Sans", "Helvetica Neue", "Noto Sans CJK JP",
+                 "Noto Sans CJK SC", "Noto Sans CJK KR", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+  .page { padding: 0; }
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 14pt;
+    margin-bottom: 18pt;
+  }
+  .brand { font-size: 16pt; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+  .title { font-size: 13pt; font-weight: 600; color: var(--accent); margin-top: 2pt; }
+  .meta  { text-align: right; font-size: 9pt; color: var(--ink-faint); line-height: 1.6; }
+
+  .info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6pt 24pt;
+    margin-bottom: 18pt;
+  }
+  .info dt {
+    font-size: 8.5pt; font-weight: 600; color: var(--ink-faint);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .info dd { margin: 0 0 4pt; font-size: 11pt; color: var(--ink); font-weight: 500; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18pt; margin-bottom: 18pt; }
+  .col h3 {
+    font-size: 9pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--ink-soft);
+    margin: 0 0 8pt; padding-bottom: 4pt; border-bottom: 1px solid var(--border);
+  }
+  table {
+    width: 100%; border-collapse: collapse;
+  }
+  table tr:nth-child(even) { background: var(--table-alt); }
+  table td { padding: 6pt 8pt; font-size: 10pt; }
+  table td.amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .totals {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12pt;
+    margin: 18pt 0 8pt;
+    padding: 14pt 16pt;
+    background: var(--table-alt);
+    border-radius: 6pt;
+  }
+  .totals .cell { text-align: center; }
+  .totals .label {
+    font-size: 8pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--ink-faint);
+    margin-bottom: 4pt;
+  }
+  .totals .value { font-size: 14pt; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .totals .net   { color: var(--accent); }
+
+  footer {
+    margin-top: 18pt; padding-top: 10pt;
+    border-top: 1px dashed var(--border);
+    font-size: 8pt; color: var(--ink-faint);
+    display: flex; justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <div class="brand">{{BRAND_NAME}}</div>
+      <div class="title">{{SLIP_TITLE}}</div>
+    </div>
+    <div class="meta">
+      {{LABEL_GENERATED}}<br>
+      {{SLIP_MONTH}}
+    </div>
+  </header>
+
+  <dl class="info">
+    <div><dt>{{LABEL_EMPLOYEE}}</dt><dd>{{EMP_NAME}}</dd></div>
+    <div><dt>{{LABEL_EMPCODE}}</dt><dd>{{EMP_CODE}}</dd></div>
+    <div><dt>{{LABEL_DESIG}}</dt><dd>{{EMP_DESIG}}</dd></div>
+    <div><dt>{{LABEL_DEPT}}</dt><dd>{{EMP_DEPT}}</dd></div>
+    <div><dt>{{LABEL_MONTH}}</dt><dd>{{SLIP_MONTH}}</dd></div>
+    <div><dt>{{LABEL_DAYS}}</dt><dd>{{DAYS_WORKED}}</dd></div>
+  </dl>
+
+  <div class="cols">
+    <div class="col">
+      <h3>{{LABEL_EARNINGS}}</h3>
+      <table>{{EARNINGS_ROWS}}</table>
+    </div>
+    <div class="col">
+      <h3>{{LABEL_DEDUCTIONS}}</h3>
+      <table>{{DEDUCTION_ROWS}}</table>
+    </div>
+  </div>
+
+  <div class="totals">
+    <div class="cell">
+      <div class="label">{{LABEL_GROSS}}</div>
+      <div class="value">{{GROSS}}</div>
+    </div>
+    <div class="cell">
+      <div class="label">{{LABEL_TOTAL_DED}}</div>
+      <div class="value">{{TOTAL_DEDUCT}}</div>
+    </div>
+    <div class="cell">
+      <div class="label">{{LABEL_NET}}</div>
+      <div class="value net">{{NET}}</div>
+    </div>
+  </div>
+
+  <footer>
+    <span>{{LABEL_CONFIDENTIAL}}</span>
+    <span>{{BRAND_NAME}}</span>
+  </footer>
+</div>
+</body>
+</html>

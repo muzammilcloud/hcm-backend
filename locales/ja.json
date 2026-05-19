@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "status": "draft",
+    "notes": "Machine-translated starter draft. Native Japanese speaker review required. Keigo (敬語) level should be reviewed for tone consistency — current draft uses です/ます form. HR vocabulary varies between 給与/給料/賃金 — pick one and stay consistent."
+  },
+  "email": {
+    "invite": {
+      "subject": "{companyName}のTickinワークスペースへの招待",
+      "preheader": "パスワードを設定して、ワークスペースへのログインを有効にしてください。",
+      "heading": "{companyName}へようこそ",
+      "lede": "Tickinのワークスペースに招待されました。下のボタンからパスワードを設定してサインインしてください。",
+      "cta": "パスワードを設定",
+      "expiresNote": "この招待リンクは7日後に期限切れになります。"
+    },
+    "passwordReset": {
+      "subject": "Tickinパスワードのリセット",
+      "heading": "パスワードをリセット",
+      "cta": "パスワードをリセット",
+      "expiresNote": "このリンクは1時間後に期限切れになります。"
+    },
+    "dunning": {
+      "day0": {
+        "subject": "対応が必要です — Tickinの最後のお支払いが完了しませんでした",
+        "title": "最後のお支払いが完了しませんでした",
+        "cta": "支払い方法を更新"
+      },
+      "day5": {
+        "subject": "最終通知 — Tickinワークスペースが2日後に一時停止します",
+        "title": "最終通知:ワークスペースの一時停止まで2日"
+      }
+    },
+    "common": {
+      "greeting": "{name}様",
+      "regards": "— Tickinチーム"
+    }
+  },
+  "slack": {
+    "paymentFailed": {
+      "header": "⚠ 支払いに失敗しました — Tickinワークスペース",
+      "cta": "支払い方法を更新"
+    }
+  },
+  "pdf": {
+    "salarySlip": {
+      "title": "給与明細",
+      "employeeName": "従業員",
+      "designation": "役職",
+      "department": "部署",
+      "empCode": "従業員ID",
+      "month": "支払期間",
+      "daysWorked": "勤務日数",
+      "earnings": "支給",
+      "deductions": "控除",
+      "grossSalary": "総支給額",
+      "netSalary": "差引支給額",
+      "providentFund": "退職金積立",
+      "withholdingTax": "源泉徴収税",
+      "totalDeductions": "控除合計",
+      "generatedOn": "発行日:{date}",
+      "confidential": "親展 — 記載の従業員専用。"
+    }
+  }
+}

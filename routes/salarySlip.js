@@ -3,6 +3,33 @@ const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { calculateSlip } = require('../services/salaryCalc');
+const { generateSalarySlipPdf } = require('../services/pdf');
+
+// Helper — load employee + slip + workspace settings + the recipient locale
+// (the EMPLOYEE'S locale, not the requester's, so a Japanese employee's
+// slip is in Japanese even if the admin downloading it is in en).
+async function loadSlipBundle(pool, employeeId, fallbackLocale) {
+  const slip = await calculateSlip(pool, Number(employeeId));
+  const [empRows] = await pool.execute(
+    `SELECT e.id, e.name, e.role, e.department, e.emp_code,
+            pu.preferred_locale
+     FROM employees e
+     LEFT JOIN portal_users pu ON pu.employee_id = e.id
+     WHERE e.id = ? LIMIT 1`,
+    [Number(employeeId)]
+  );
+  const employee = empRows[0] || null;
+  const [setRows] = await pool.execute(
+    `SELECT currency, country_code, company_name, slip_title, default_locale
+     FROM tenant_settings WHERE singleton_key = 1 LIMIT 1`
+  );
+  const settings = setRows[0] || {};
+  const locale = employee?.preferred_locale
+              || settings.default_locale
+              || fallbackLocale
+              || 'en';
+  return { employee, slip, settings, locale };
+}
 
 // GET /api/employee/me/slip — logged-in employee fetches their own slip
 router.get('/employee/me/slip', requireEmployee, async (req, res, next) => {
@@ -92,6 +119,47 @@ router.delete('/salary/overrides/:employee_id/:component_id', requireAdmin, asyn
       [Number(req.params.employee_id), Number(req.params.component_id)]
     );
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ── PDF endpoints (server-rendered via Puppeteer, CJK-safe) ─────────────────
+
+// GET /api/employee/me/slip.pdf — employee downloads their own slip
+router.get('/employee/me/slip.pdf', requireEmployee, async (req, res, next) => {
+  try {
+    const pool = await getDB();
+    const [rows] = await pool.execute(
+      'SELECT employee_id FROM portal_users WHERE id = ?',
+      [req.portalUserId]
+    );
+    if (!rows.length || !rows[0].employee_id) {
+      return res.status(404).json({ error: 'No employee record linked to this portal account.' });
+    }
+    const bundle = await loadSlipBundle(pool, rows[0].employee_id, req.locale);
+    const pdf = await generateSalarySlipPdf(bundle);
+    res.set({
+      'Content-Type':        'application/pdf',
+      'Content-Disposition': `attachment; filename="salary-slip-${bundle.slip?.month || 'current'}.pdf"`,
+      'Content-Length':      pdf.length,
+      'Cache-Control':       'no-store',
+    });
+    res.send(pdf);
+  } catch (e) { next(e); }
+});
+
+// GET /api/salary/slip/:employee_id.pdf — admin downloads any employee's slip
+router.get('/salary/slip/:employee_id.pdf', requireAdmin, async (req, res, next) => {
+  try {
+    const pool = await getDB();
+    const bundle = await loadSlipBundle(pool, req.params.employee_id, req.locale);
+    const pdf = await generateSalarySlipPdf(bundle);
+    res.set({
+      'Content-Type':        'application/pdf',
+      'Content-Disposition': `attachment; filename="salary-slip-${bundle.employee?.emp_code || req.params.employee_id}-${bundle.slip?.month || 'current'}.pdf"`,
+      'Content-Length':      pdf.length,
+      'Cache-Control':       'no-store',
+    });
+    res.send(pdf);
   } catch (e) { next(e); }
 });
 

@@ -17,7 +17,17 @@ FROM node:18-alpine AS runtime
 WORKDIR /app
 
 # wget is used by HEALTHCHECK; tini reaps zombies and forwards signals cleanly.
-RUN apk add --no-cache wget tini
+# chromium + font-noto-cjk + nss + freetype + harfbuzz + ca-certificates power
+# Puppeteer-rendered salary slip PDFs with full CJK glyph coverage (Noto Sans
+# JP / SC / KR all live in font-noto-cjk). PUPPETEER_EXECUTABLE_PATH below
+# points puppeteer-core at the system Chromium so we don't bundle our own.
+RUN apk add --no-cache \
+      wget tini \
+      chromium nss freetype harfbuzz ca-certificates \
+      font-noto-cjk ttf-dejavu
+
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 # Copy node_modules and source as the non-root `node` user that ships in
 # the alpine base image. Running as non-root is a basic hardening step.

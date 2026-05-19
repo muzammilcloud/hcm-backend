@@ -39,37 +39,50 @@ const transporter = new Proxy({}, {
   },
 });
 
-async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: providedUrl, companyName }) {
+async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: providedUrl, companyName, locale }) {
   const recipient = email || to;
   const baseUrl   = process.env.FRONTEND_URL || 'http://localhost:5173';
   const inviteUrl = providedUrl || `${baseUrl}/set-password?token=${inviteToken}`;
-  email = recipient;  // keep older template references working below
+  email = recipient;
+
+  // i18n lookup. `locale` should be the recipient's preferred_locale where
+  // available; the t() helper falls back to en when a key is missing.
+  const { t } = require('./i18n');
+  const L = locale || 'en';
+  const _company = companyName || 'Tickin';
+
+  const subject  = t(L, 'email.invite.subject', { companyName: _company });
+  const heading  = t(L, 'email.invite.heading', { companyName: _company });
+  const greeting = t(L, 'email.common.greeting', { name });
+  const lede     = t(L, 'email.invite.lede');
+  const cta      = t(L, 'email.invite.cta');
+  const expires  = t(L, 'email.invite.expiresNote');
+  const fallback = t(L, 'email.invite.fallback');
+
   const html = `
     <!DOCTYPE html>
-    <html>
+    <html lang="${L}">
     <head><meta charset="UTF-8"></head>
-    <body style="margin:0;padding:0;background:#020617;font-family:'Segoe UI',sans-serif;">
+    <body style="margin:0;padding:0;background:#020617;font-family:'Segoe UI','Noto Sans CJK JP','Noto Sans CJK SC','Noto Sans CJK KR',sans-serif;">
       <div style="max-width:520px;margin:40px auto;background:#0f172a;border-radius:16px;overflow:hidden;border:1px solid #1e293b;">
         <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px;text-align:center;">
           <div style="font-size:36px;margin-bottom:8px;">⏱</div>
-          <h1 style="margin:0;color:#fff;font-size:24px;font-weight:800;">Welcome to Tickin</h1>
-          <p style="margin:8px 0 0;color:#e0e7ff;font-size:14px;">Modern HR Platform</p>
+          <h1 style="margin:0;color:#fff;font-size:24px;font-weight:800;">${heading}</h1>
         </div>
         <div style="padding:32px;">
-          <p style="color:#94a3b8;font-size:15px;margin:0 0 16px;">Hi <strong style="color:#f1f5f9;">${name}</strong>,</p>
-          <p style="color:#94a3b8;font-size:15px;margin:0 0 24px;">You've been invited to join <strong style="color:#f1f5f9;">Tickin</strong>. Click the button below to set your password and activate your account.</p>
+          <p style="color:#94a3b8;font-size:15px;margin:0 0 16px;">${greeting}</p>
+          <p style="color:#94a3b8;font-size:15px;margin:0 0 24px;">${lede}</p>
           <div style="background:#1e293b;border-radius:12px;padding:20px;margin-bottom:24px;">
-            <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px;">Your Login Email</div>
-            <div style="font-size:16px;color:#f1f5f9;font-weight:600;">${email}</div>
+            <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px;">${email}</div>
           </div>
           <a href="${inviteUrl}" style="display:block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-align:center;padding:16px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;margin-bottom:24px;">
-            🔐 Set My Password &amp; Login →
+            ${cta} →
           </a>
-          <p style="color:#475569;font-size:12px;margin:0 0 8px;text-align:center;">This invite link expires in <strong>7 days</strong>.</p>
-          <p style="color:#334155;font-size:11px;margin:0;text-align:center;word-break:break-all;">Or copy this link: ${inviteUrl}</p>
+          <p style="color:#475569;font-size:12px;margin:0 0 8px;text-align:center;">${expires}</p>
+          <p style="color:#334155;font-size:11px;margin:0;text-align:center;word-break:break-all;">${fallback} ${inviteUrl}</p>
         </div>
         <div style="background:#090e1a;padding:16px;text-align:center;border-top:1px solid #1e293b;">
-          <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
+          <p style="margin:0;color:#334155;font-size:12px;">Tickin</p>
         </div>
       </div>
     </body>
@@ -79,12 +92,10 @@ async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: provid
     await transporter.sendMail({
       from:    `"Tickin" <${process.env.SMTP_USER}>`,
       to:      recipient,
-      subject: companyName
-        ? `🎉 You're invited to ${companyName} on Tickin — Set your password`
-        : '🎉 You\'re invited to Tickin — Set your password',
+      subject,
       html,
     });
-    console.log(`✅ Invite email sent to ${email}`);
+    console.log(`✅ Invite email sent to ${email} (locale=${L})`);
     return true;
   } catch (e) {
     console.error(`❌ Email failed to ${email}:`, e.message);

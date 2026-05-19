@@ -18,7 +18,8 @@
     "google-auth-library": "^9.14.0",
     "helmet": "^8.1.0",
     "mysql2": "^3.9.2",
-    "nodemailer": "^6.9.13"
+    "nodemailer": "^6.9.13",
+    "puppeteer-core": "^23.6.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "status": "draft",
+    "notes": "Machine-translated starter draft. Native French speaker review required. French HR vocabulary is precise (bulletin de salaire vs fiche de paie; cotisation vs retenue); verify before production."
+  },
+  "email": {
+    "invite": {
+      "subject": "Vous êtes invité à rejoindre {companyName} sur Tickin",
+      "preheader": "Définissez votre mot de passe pour activer l'accès à votre espace de travail.",
+      "heading": "Bienvenue sur {companyName}",
+      "lede": "Vous avez été invité à rejoindre l'espace de travail sur Tickin. Cliquez ci-dessous pour définir votre mot de passe et vous connecter.",
+      "cta": "Définir le mot de passe",
+      "expiresNote": "Ce lien d'invitation expire dans 7 jours."
+    },
+    "passwordReset": {
+      "subject": "Réinitialisez votre mot de passe Tickin",
+      "heading": "Réinitialiser le mot de passe",
+      "cta": "Réinitialiser le mot de passe",
+      "expiresNote": "Ce lien expire dans 1 heure."
+    },
+    "dunning": {
+      "day0": {
+        "subject": "Action requise — votre dernier paiement Tickin n'a pas abouti",
+        "title": "Votre dernier paiement n'a pas abouti",
+        "cta": "Mettre à jour le mode de paiement"
+      },
+      "day5": {
+        "subject": "Dernier avis — votre espace de travail Tickin sera suspendu dans 2 jours",
+        "title": "Dernier avis : 2 jours avant la suspension"
+      }
+    },
+    "common": {
+      "greeting": "Bonjour {name},",
+      "regards": "— L'équipe Tickin"
+    }
+  },
+  "slack": {
+    "paymentFailed": {
+      "header": "⚠ Paiement échoué — votre espace de travail Tickin",
+      "cta": "Mettre à jour le mode de paiement"
+    }
+  },
+  "pdf": {
+    "salarySlip": {
+      "title": "Bulletin de salaire",
+      "employeeName": "Employé",
+      "designation": "Poste",
+      "department": "Département",
+      "empCode": "Identifiant employé",
+      "month": "Période de paie",
+      "daysWorked": "Jours travaillés",
+      "earnings": "Rémunération",
+      "deductions": "Retenues",
+      "grossSalary": "Salaire brut",
+      "netSalary": "Salaire net",
+      "providentFund": "Cotisation retraite",
+      "withholdingTax": "Retenue à la source",
+      "totalDeductions": "Total des retenues",
+      "generatedOn": "Généré le {date}",
+      "confidential": "Confidentiel — destiné uniquement à l'employé concerné."
+    }
+  }
+}

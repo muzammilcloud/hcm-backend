@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "status": "draft",
+    "notes": "Machine-translated starter draft (Simplified Chinese, mainland market). Native speaker review required. HR/payroll terms specific to mainland China (公积金, 社保) differ from HK/TW conventions — verify target market before production."
+  },
+  "email": {
+    "invite": {
+      "subject": "邀请您加入 {companyName} 在 Tickin 的工作区",
+      "preheader": "请设置密码以激活工作区登录。",
+      "heading": "欢迎加入 {companyName}",
+      "lede": "您已被邀请加入 Tickin 的工作区。请点击下方按钮设置密码并登录。",
+      "cta": "设置密码",
+      "expiresNote": "此邀请链接将在 7 天后失效。"
+    },
+    "passwordReset": {
+      "subject": "重置您的 Tickin 密码",
+      "heading": "重置密码",
+      "cta": "重置密码",
+      "expiresNote": "此链接将在 1 小时后失效。"
+    },
+    "dunning": {
+      "day0": {
+        "subject": "需要您的处理 — 您最近一次的 Tickin 付款未能完成",
+        "title": "您最近一次的付款未能完成",
+        "cta": "更新付款方式"
+      },
+      "day5": {
+        "subject": "最终通知 — 您的 Tickin 工作区将在 2 天后暂停",
+        "title": "最终通知:工作区将在 2 天后暂停"
+      }
+    },
+    "common": {
+      "greeting": "您好 {name},",
+      "regards": "— Tickin 团队"
+    }
+  },
+  "slack": {
+    "paymentFailed": {
+      "header": "⚠ 付款失败 — 您的 Tickin 工作区",
+      "cta": "更新付款方式"
+    }
+  },
+  "pdf": {
+    "salarySlip": {
+      "title": "工资单",
+      "employeeName": "员工",
+      "designation": "职位",
+      "department": "部门",
+      "empCode": "员工编号",
+      "month": "工资周期",
+      "daysWorked": "出勤天数",
+      "earnings": "收入",
+      "deductions": "扣除",
+      "grossSalary": "应发工资",
+      "netSalary": "实发工资",
+      "providentFund": "公积金",
+      "withholdingTax": "代扣税款",
+      "totalDeductions": "扣除合计",
+      "generatedOn": "生成日期:{date}",
+      "confidential": "机密 — 仅供指定员工查阅。"
+    }
+  }
+}

@@ -11,6 +11,7 @@ const { migrateAllTenants } = require('./services/migrations');
 const { startOTChecker }    = require('./services/slack');
 const { scheduleReports }   = require('./services/scheduler');
 const { tenantMiddleware }  = require('./middleware/tenant');
+const localeMiddleware      = require('./middleware/locale');
 const { authLimiter, passwordResetLimiter } = require('./middleware/rateLimit');
 const { errorHandler, notFoundHandler }     = require('./middleware/errorHandler');
 
@@ -93,6 +94,7 @@ app.use('/api/platform/login',            authLimiter);
 // Resolve the tenant for every non-platform request. Platform paths
 // (/api/platform/*, /api/signup, /api/slug-*, /api/tenant/*, /health)
 // skip this and run against the platform DB.
+app.use(localeMiddleware);
 app.use(tenantMiddleware);
 
 // Platform (control-plane) routes

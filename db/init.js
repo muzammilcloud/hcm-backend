@@ -172,6 +172,8 @@ async function initTenantSchema(poolArg) {
   try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN portal_role ENUM('employee','team-lead','sys-admin') DEFAULT 'employee'`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN google_sub VARCHAR(40) NULL`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE portal_users ADD UNIQUE KEY uq_portal_users_google_sub (google_sub)`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN preferred_locale VARCHAR(10) NULL AFTER status`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN default_locale VARCHAR(10) NOT NULL DEFAULT 'en' AFTER country_code`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}

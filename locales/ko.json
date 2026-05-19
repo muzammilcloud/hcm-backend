@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "status": "draft",
+    "notes": "Machine-translated starter draft. Native Korean speaker review required. HR terms (급여 vs 임금, 원천징수 etc.) need verification against current Korean labor practice."
+  },
+  "email": {
+    "invite": {
+      "subject": "{companyName}의 Tickin 워크스페이스에 초대되었습니다",
+      "preheader": "비밀번호를 설정하여 워크스페이스 로그인을 활성화하세요.",
+      "heading": "{companyName}에 오신 것을 환영합니다",
+      "lede": "Tickin의 워크스페이스에 초대되었습니다. 아래 버튼을 클릭하여 비밀번호를 설정하고 로그인하세요.",
+      "cta": "비밀번호 설정",
+      "expiresNote": "이 초대 링크는 7일 후 만료됩니다."
+    },
+    "passwordReset": {
+      "subject": "Tickin 비밀번호 재설정",
+      "heading": "비밀번호 재설정",
+      "cta": "비밀번호 재설정",
+      "expiresNote": "이 링크는 1시간 후 만료됩니다."
+    },
+    "dunning": {
+      "day0": {
+        "subject": "조치 필요 — 최근 Tickin 결제가 완료되지 않았습니다",
+        "title": "최근 결제가 완료되지 않았습니다",
+        "cta": "결제 수단 업데이트"
+      },
+      "day5": {
+        "subject": "최종 알림 — Tickin 워크스페이스가 2일 후 일시 정지됩니다",
+        "title": "최종 알림: 워크스페이스 일시 정지까지 2일"
+      }
+    },
+    "common": {
+      "greeting": "{name}님,",
+      "regards": "— Tickin 팀"
+    }
+  },
+  "slack": {
+    "paymentFailed": {
+      "header": "⚠ 결제 실패 — Tickin 워크스페이스",
+      "cta": "결제 수단 업데이트"
+    }
+  },
+  "pdf": {
+    "salarySlip": {
+      "title": "급여 명세서",
+      "employeeName": "직원",
+      "designation": "직책",
+      "department": "부서",
+      "empCode": "직원 번호",
+      "month": "급여 기간",
+      "daysWorked": "근무 일수",
+      "earnings": "지급",
+      "deductions": "공제",
+      "grossSalary": "총 급여",
+      "netSalary": "실수령액",
+      "providentFund": "퇴직 적립금",
+      "withholdingTax": "원천징수세",
+      "totalDeductions": "공제 합계",
+      "generatedOn": "발행일: {date}",
+      "confidential": "기밀 — 명시된 직원 전용."
+    }
+  }
+}
