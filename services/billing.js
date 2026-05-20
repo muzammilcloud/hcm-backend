@@ -523,6 +523,7 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
   const TIER_MONTHLY = { starter: 19, growth: 3, business: 6 };
   const ADDON_MONTHLY = { desktop_standard: 3 };
   const ANNUAL_FACTOR = 0.8;
+  const GROWTH_BUSINESS_MIN_SEATS = 10;
 
   const currentTier  = tenant?.plan || 'starter';
   const currentCycle = tenant?.billing_cycle || 'monthly';
@@ -530,10 +531,17 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
   const currentAddons = Array.isArray(tenant?.addons) ? tenant.addons : [];
 
   const isPerSeat = (t) => t === 'growth' || t === 'business';
+  // Per-seat tiers (Growth, Business) have a 10-seat minimum. Bill the
+  // greater of actual employees or the minimum so a 4-person team on
+  // Growth still pays the floor of $30/mo, not $12/mo.
+  const billedSeats = (t, count) => isPerSeat(t) ? Math.max(count, GROWTH_BUSINESS_MIN_SEATS) : count;
   const tierMonthlyTotal = (t, count) => {
     const per = TIER_MONTHLY[t] || 0;
-    return isPerSeat(t) ? per * count : per;
+    return isPerSeat(t) ? per * billedSeats(t, count) : per;
   };
+  // Add-ons bill for actual employees, not the minimum-bill seat count
+  // (so a 4-employee Growth tenant with Desktop on pays 4 × $3 = $12, not
+  // 10 × $3 = $30 for desktop licenses they're not using).
   const addonMonthlyTotal = (list, count) =>
     list.reduce((sum, a) => sum + (ADDON_MONTHLY[a] || 0) * count, 0);
 
@@ -772,12 +780,15 @@ async function syncSeatCount(tenantId, seats) {
   // so pushing quantity updates there is pointless.
   if (plan !== 'growth' && plan !== 'business') return;
 
+  // 10-seat minimum on Growth/Business — a tenant with 4 employees still
+  // bills as 10 seats. Polar charges max(actual, minimum). Without this
+  // clamp, syncing 4 to Polar would charge 4 × $3 = $12/mo, undercutting
+  // the marketed Growth floor of $30/mo.
+  const GROWTH_BUSINESS_MIN_SEATS = 10;
+  const billedSeats = Math.max(seats, GROWTH_BUSINESS_MIN_SEATS);
+
   try {
-    // Polar's exact per-seat update shape varies by pricing model. The most
-    // common path: update the subscription with a new quantity. If your
-    // Polar product uses customer_seats instead, this no-ops cleanly and
-    // the webhook (subscription.updated) will reconcile state either way.
-    await polar.subscriptions.update({ id: subId, quantity: seats });
+    await polar.subscriptions.update({ id: subId, quantity: billedSeats });
   } catch (e) {
     // Common cause: product is configured for customer-managed seats
     // (assigned by the customer themselves via the portal). In that case
