@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { getPlatformDB } = require('../db');
-const { createCheckout, getCustomerPortalUrl, setAutoRenew, setAddon, isConfigured } = require('../services/billing');
+const { createCheckout, getCustomerPortalUrl, setAutoRenew, setAddon, changePlan, previewChange, isConfigured } = require('../services/billing');
 const { PRICE_IDS, ADDON_PRICE_IDS } = require('../lib/polarConstants');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +117,46 @@ router.post('/billing/addons', requireAdmin, async (req, res, next) => {
 
     const result = await setAddon(tenant, addon, enabled);
     res.json({ ...result, pending_sync: !result.no_change });
+  } catch (e) { next(e); }
+});
+
+// POST /api/billing/preview-change — preview what a plan change / add-on
+// toggle would cost today (prorated) and at next renewal. Pure calculation,
+// no Polar side effects. Body: { tier?, cycle?, addons?, seats? }
+router.post('/billing/preview-change', requireAdmin, async (req, res, next) => {
+  try {
+    const tenant = await loadTenant(req);
+    if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
+    const preview = previewChange(tenant, {
+      tier:   req.body?.tier,
+      cycle:  req.body?.cycle,
+      addons: Array.isArray(req.body?.addons) ? req.body.addons : (tenant.addons || []),
+      seats:  req.body?.seats,
+    });
+    res.json(preview);
+  } catch (e) { next(e); }
+});
+
+// POST /api/billing/change-plan — switch base plan tier / cycle on an
+// existing subscription. Preserves add-ons. Body: { tier, cycle }
+router.post('/billing/change-plan', requireAdmin, async (req, res, next) => {
+  try {
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'Billing is not configured on this server yet.' });
+    }
+    const tenant = await loadTenant(req);
+    if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
+    if (!tenant.polar_subscription_id) {
+      return res.status(400).json({
+        error: 'Start a plan first — there is no active subscription to change.',
+        code:  'NO_SUBSCRIPTION',
+      });
+    }
+    const result = await changePlan(tenant, {
+      tier:  req.body?.tier,
+      cycle: req.body?.cycle || 'monthly',
+    });
+    res.json({ ...result, message: 'Plan change submitted to Polar. Polar will prorate today\'s charge and your subscription will update within a few seconds.' });
   } catch (e) { next(e); }
 });
 

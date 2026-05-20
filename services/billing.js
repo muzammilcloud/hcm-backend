@@ -472,6 +472,124 @@ async function sendPaymentFailedSlackDM(tenantId, tenantRow) {
   );
 }
 
+// Change the base plan (Starter ↔ Growth) on an existing subscription.
+// Keeps existing add-ons attached. Polar prorates the difference between
+// the old and new product for the remainder of the current period.
+async function changePlan(tenant, { tier, cycle = 'monthly' }) {
+  const polar = getPolar();
+  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!tenant?.polar_subscription_id) {
+    throw new Error('No active subscription to change.');
+  }
+  if (!['starter', 'growth'].includes(tier)) {
+    throw new Error('Self-serve plan changes are only between Starter and Growth. Business plans need a sales conversation.');
+  }
+  if (!['monthly', 'annual'].includes(cycle)) {
+    throw new Error('cycle must be monthly | annual.');
+  }
+  const newBasePriceId = PRICE_IDS[tier]?.[cycle];
+  if (!newBasePriceId) {
+    throw new Error(`Polar price not configured for ${tier}/${cycle}.`);
+  }
+
+  // Pull current subscription, replace the BASE plan price while keeping
+  // any add-on lines (desktop_standard, etc.) intact.
+  const current = await polar.subscriptions.get({ id: tenant.polar_subscription_id });
+  const allCurrentPriceIds = extractPriceIds(current);
+
+  // Identify which current price IDs are base-plan products (Starter or
+  // Growth, monthly or annual). Drop those; keep everything else (add-ons).
+  const allBasePriceIds = new Set();
+  for (const cycles of Object.values(PRICE_IDS)) {
+    for (const id of Object.values(cycles)) if (id) allBasePriceIds.add(id);
+  }
+  const kept = allCurrentPriceIds.filter(id => !allBasePriceIds.has(id));
+  const newPriceIds = [newBasePriceId, ...kept];
+
+  await polar.subscriptions.update({
+    id: tenant.polar_subscription_id,
+    productPriceIds: newPriceIds,
+  });
+
+  return { tier, cycle, pending_sync: true };
+}
+
+// Locally compute a prorated preview for a plan change OR add-on toggle.
+// Doesn't hit Polar — uses the cached subscription state from our DB
+// plus the desired new shape to estimate the delta. Polar does the
+// authoritative math at the moment of update; this is for the
+// "are you sure?" panel.
+function previewChange(tenant, { tier, cycle, addons = [], seats }) {
+  const TIER_MONTHLY = { starter: 19, growth: 3, business: 6 };
+  const ADDON_MONTHLY = { desktop_standard: 3 };
+  const ANNUAL_FACTOR = 0.8;
+
+  const currentTier  = tenant?.plan || 'starter';
+  const currentCycle = tenant?.billing_cycle || 'monthly';
+  const currentSeats = Number(tenant?.seat_count) || Number(seats) || 1;
+  const currentAddons = Array.isArray(tenant?.addons) ? tenant.addons : [];
+
+  const isPerSeat = (t) => t === 'growth' || t === 'business';
+  const tierMonthlyTotal = (t, count) => {
+    const per = TIER_MONTHLY[t] || 0;
+    return isPerSeat(t) ? per * count : per;
+  };
+  const addonMonthlyTotal = (list, count) =>
+    list.reduce((sum, a) => sum + (ADDON_MONTHLY[a] || 0) * count, 0);
+
+  const currentMonthly = tierMonthlyTotal(currentTier, currentSeats)
+                       + addonMonthlyTotal(currentAddons, currentSeats);
+  const newSeats       = Number(seats) || currentSeats;
+  const newMonthly     = tierMonthlyTotal(tier || currentTier, newSeats)
+                       + addonMonthlyTotal(addons, newSeats);
+
+  // Prorate: how many days remain in the current billing cycle?
+  const now      = new Date();
+  const periodEnd = tenant?.current_period_end ? new Date(tenant.current_period_end) : null;
+  const daysRemaining = periodEnd
+    ? Math.max(0, Math.ceil((periodEnd - now) / 86_400_000))
+    : 30;
+  // Approximate days in cycle from billing_cycle so monthly + annual share math
+  const daysInCycle = (cycle || currentCycle) === 'annual' ? 365 : 30;
+
+  const currentFactor = currentCycle === 'annual' ? ANNUAL_FACTOR : 1;
+  const newFactor     = (cycle || currentCycle) === 'annual' ? ANNUAL_FACTOR : 1;
+
+  // Per-day rate for the remainder of the current period
+  const currentDailyRate = (currentMonthly * currentFactor) / 30;
+  const newDailyRate     = (newMonthly * newFactor) / 30;
+  const proratedDelta    = (newDailyRate - currentDailyRate) * daysRemaining;
+
+  const nextRenewalTotal = (cycle === 'annual' || (!cycle && currentCycle === 'annual'))
+    ? newMonthly * newFactor * 12
+    : newMonthly * newFactor;
+
+  return {
+    current: {
+      tier:    currentTier,
+      cycle:   currentCycle,
+      seats:   currentSeats,
+      addons:  currentAddons,
+      monthly: Math.round(currentMonthly * currentFactor * 100) / 100,
+    },
+    next: {
+      tier:    tier || currentTier,
+      cycle:   cycle || currentCycle,
+      seats:   newSeats,
+      addons,
+      monthly: Math.round(newMonthly * newFactor * 100) / 100,
+    },
+    prorate: {
+      days_remaining: daysRemaining,
+      delta_now:      Math.round(proratedDelta * 100) / 100,
+    },
+    next_renewal: {
+      date:   periodEnd ? periodEnd.toISOString() : null,
+      total:  Math.round(nextRenewalTotal * 100) / 100,
+    },
+  };
+}
+
 // Add or remove an add-on on the tenant's existing Polar subscription.
 // Polar will prorate the charge for the rest of the current period and
 // fire subscription.updated which our webhook handler will mirror back
@@ -677,6 +795,8 @@ module.exports = {
   syncSeatCount,
   setAutoRenew,
   setAddon,
+  changePlan,
+  previewChange,
   subscriptionHasAddon,
   isConfigured,
 };
