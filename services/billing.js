@@ -575,11 +575,22 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
   const addonMonthlyTotal = (list, count) =>
     list.reduce((sum, a) => sum + (ADDON_MONTHLY[a] || 0) * count, 0);
 
-  const currentMonthly = tierMonthlyTotal(currentTier, currentSeats)
-                       + addonMonthlyTotal(currentAddons, currentSeats);
-  const newSeats       = Number(seats) || currentSeats;
-  const newMonthly     = tierMonthlyTotal(tier || currentTier, newSeats)
-                       + addonMonthlyTotal(addons, newSeats);
+  const newSeats = Number(seats) || currentSeats;
+
+  // Annual discount applies to the base plan ONLY. Add-ons (Desktop) are
+  // always billed at face value — $3/seat/month regardless of cycle. That
+  // matches the Polar catalog where the Desktop product is a separate
+  // monthly price, not discounted as part of the annual plan.
+  const currentTierFactor = currentCycle === 'annual' ? ANNUAL_FACTOR : 1;
+  const newTierFactor     = (cycle || currentCycle) === 'annual' ? ANNUAL_FACTOR : 1;
+
+  const currentTierMonthly = tierMonthlyTotal(currentTier, currentSeats) * currentTierFactor;
+  const currentAddonMonthly = addonMonthlyTotal(currentAddons, currentSeats); // no factor
+  const currentMonthly = currentTierMonthly + currentAddonMonthly;
+
+  const newTierMonthly = tierMonthlyTotal(tier || currentTier, newSeats) * newTierFactor;
+  const newAddonMonthly = addonMonthlyTotal(addons, newSeats); // no factor
+  const newMonthly = newTierMonthly + newAddonMonthly;
 
   // Prorate: how many days remain in the current billing cycle?
   const now      = new Date();
@@ -587,20 +598,15 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
   const daysRemaining = periodEnd
     ? Math.max(0, Math.ceil((periodEnd - now) / 86_400_000))
     : 30;
-  // Approximate days in cycle from billing_cycle so monthly + annual share math
-  const daysInCycle = (cycle || currentCycle) === 'annual' ? 365 : 30;
-
-  const currentFactor = currentCycle === 'annual' ? ANNUAL_FACTOR : 1;
-  const newFactor     = (cycle || currentCycle) === 'annual' ? ANNUAL_FACTOR : 1;
 
   // Per-day rate for the remainder of the current period
-  const currentDailyRate = (currentMonthly * currentFactor) / 30;
-  const newDailyRate     = (newMonthly * newFactor) / 30;
+  const currentDailyRate = currentMonthly / 30;
+  const newDailyRate     = newMonthly / 30;
   const proratedDelta    = (newDailyRate - currentDailyRate) * daysRemaining;
 
   const nextRenewalTotal = (cycle === 'annual' || (!cycle && currentCycle === 'annual'))
-    ? newMonthly * newFactor * 12
-    : newMonthly * newFactor;
+    ? (newTierMonthly * 12) + (newAddonMonthly * 12) // tier billed once a year; addon still monthly
+    : newMonthly;
 
   return {
     current: {
@@ -608,14 +614,14 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
       cycle:   currentCycle,
       seats:   currentSeats,
       addons:  currentAddons,
-      monthly: Math.round(currentMonthly * currentFactor * 100) / 100,
+      monthly: Math.round(currentMonthly * 100) / 100,
     },
     next: {
       tier:    tier || currentTier,
       cycle:   cycle || currentCycle,
       seats:   newSeats,
       addons,
-      monthly: Math.round(newMonthly * newFactor * 100) / 100,
+      monthly: Math.round(newMonthly * 100) / 100,
     },
     prorate: {
       days_remaining: daysRemaining,
