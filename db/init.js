@@ -386,6 +386,26 @@ async function initTenantSchema(poolArg) {
     )
   `);
 
+  // Portal breaks — explicit break intervals, started/stopped from Slack or web.
+  // Break time pauses the work timer: net work = (clock_out - clock_in) - sum(breaks).
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS portal_breaks (
+      id               INT AUTO_INCREMENT PRIMARY KEY,
+      portal_user_id   INT NOT NULL,
+      time_entry_id    INT NOT NULL,
+      break_start      DATETIME NOT NULL,
+      break_end        DATETIME,
+      duration_seconds INT,
+      source           VARCHAR(20) DEFAULT 'slack',
+      created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE,
+      FOREIGN KEY (time_entry_id)  REFERENCES portal_time_entries(id) ON DELETE CASCADE,
+      INDEX idx_pu_date (portal_user_id, break_start),
+      INDEX idx_entry   (time_entry_id),
+      INDEX idx_open    (portal_user_id, break_end)
+    )
+  `);
+
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS employee_sessions (
       id INT AUTO_INCREMENT PRIMARY KEY,

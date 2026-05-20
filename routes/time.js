@@ -62,6 +62,15 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
       return res.json({ requires_ot_decision: true, time_entry_id: entry.id, hours_worked: hoursWorked.toFixed(2) });
     }
 
+    // Auto-close any open break before clocking out, so its duration is recorded.
+    await pool.execute(
+      `UPDATE portal_breaks
+         SET break_end = NOW(),
+             duration_seconds = TIMESTAMPDIFF(SECOND, break_start, NOW())
+       WHERE time_entry_id = ? AND break_end IS NULL`,
+      [entry.id]
+    );
+
     if (entry.ot_decision === 'stopped') {
       const clockOut = new Date(new Date(entry.clock_in).getTime() + OT_THRESHOLD_MS);
       await pool.execute('UPDATE portal_time_entries SET clock_out=? WHERE id=?', [clockOut, entry.id]);
@@ -129,15 +138,43 @@ router.get('/employee/time-entries', requireEmployee, async (req, res) => {
 router.get('/employee/summary', requireEmployee, async (req, res) => {
   try {
     const pool = await getDB();
-    const [thisWeek]  = await pool.execute(`SELECT ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, COUNT(*) as sessions FROM portal_time_entries WHERE portal_user_id=? AND YEARWEEK(clock_in,1)=YEARWEEK(NOW(),1)`, [req.portalUserId]);
-    const [thisMonth] = await pool.execute(`SELECT ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, COUNT(*) as sessions FROM portal_time_entries WHERE portal_user_id=? AND MONTH(clock_in)=MONTH(NOW()) AND YEAR(clock_in)=YEAR(NOW())`, [req.portalUserId]);
-    const [today]     = await pool.execute(`SELECT ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, COUNT(*) as sessions FROM portal_time_entries WHERE portal_user_id=? AND DATE(clock_in)=CURDATE()`, [req.portalUserId]);
-    const [daily]     = await pool.execute(`SELECT DATE(clock_in) as date, ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours FROM portal_time_entries WHERE portal_user_id=? AND clock_in>=DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY DATE(clock_in) ORDER BY date ASC`, [req.portalUserId]);
+
+    // Break-seconds aggregator: counts open breaks against their running elapsed time.
+    const breakSec = `
+      COALESCE((
+        SELECT SUM(
+          CASE WHEN pb.break_end IS NULL
+                 THEN TIMESTAMPDIFF(SECOND, pb.break_start, NOW())
+               ELSE pb.duration_seconds
+          END
+        )
+        FROM portal_breaks pb
+        WHERE pb.time_entry_id = pte.id
+      ), 0)
+    `;
+
+    const [thisWeek]  = await pool.execute(`SELECT ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, ROUND(SUM(${breakSec})/3600, 2) as break_hours, COUNT(*) as sessions FROM portal_time_entries pte WHERE portal_user_id=? AND YEARWEEK(clock_in,1)=YEARWEEK(NOW(),1)`, [req.portalUserId]);
+    const [thisMonth] = await pool.execute(`SELECT ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, ROUND(SUM(${breakSec})/3600, 2) as break_hours, COUNT(*) as sessions FROM portal_time_entries pte WHERE portal_user_id=? AND MONTH(clock_in)=MONTH(NOW()) AND YEAR(clock_in)=YEAR(NOW())`, [req.portalUserId]);
+    const [today]     = await pool.execute(`SELECT ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, ROUND(SUM(${breakSec})/3600, 2) as break_hours, COUNT(*) as sessions FROM portal_time_entries pte WHERE portal_user_id=? AND DATE(clock_in)=CURDATE()`, [req.portalUserId]);
+    const [daily]     = await pool.execute(`SELECT DATE(clock_in) as date, ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as hours, ROUND(SUM(${breakSec})/3600, 2) as break_hours FROM portal_time_entries pte WHERE portal_user_id=? AND clock_in>=DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY DATE(clock_in) ORDER BY date ASC`, [req.portalUserId]);
+
+    const withNet = (row) => ({
+      hours: row.hours || 0,
+      break_hours: row.break_hours || 0,
+      net_hours: Math.max(0, Number(((row.hours || 0) - (row.break_hours || 0)).toFixed(2))),
+      sessions: row.sessions || 0,
+    });
+
     res.json({
-      today:      { hours: today[0].hours || 0,     sessions: today[0].sessions || 0 },
-      this_week:  { hours: thisWeek[0].hours || 0,  sessions: thisWeek[0].sessions || 0 },
-      this_month: { hours: thisMonth[0].hours || 0, sessions: thisMonth[0].sessions || 0 },
-      daily_breakdown: daily,
+      today:      withNet(today[0]),
+      this_week:  withNet(thisWeek[0]),
+      this_month: withNet(thisMonth[0]),
+      daily_breakdown: daily.map((d) => ({
+        date: d.date,
+        hours: d.hours || 0,
+        break_hours: d.break_hours || 0,
+        net_hours: Math.max(0, Number(((d.hours || 0) - (d.break_hours || 0)).toFixed(2))),
+      })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

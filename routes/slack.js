@@ -81,23 +81,40 @@ router.post('/clockout', async (req, res) => {
       return;
     }
 
+    // Auto-close any open break (so leftover breaks don't run forever)
+    await pool.execute(
+      `UPDATE portal_breaks
+         SET break_end = NOW(),
+             duration_seconds = TIMESTAMPDIFF(SECOND, break_start, NOW())
+       WHERE time_entry_id = ? AND break_end IS NULL`,
+      [active[0].id]
+    );
+
     // Clock out
     await pool.execute('UPDATE portal_time_entries SET clock_out=NOW() WHERE id=?', [active[0].id]);
 
-    // Note: portal_time_entries is separate from time_entries — OT requests are
-    // handled when sessions are reviewed in the admin portal.
+    // Sum break time for this entry (now includes the auto-closed one)
+    const [breakRows] = await pool.execute(
+      'SELECT COALESCE(SUM(duration_seconds), 0) AS total FROM portal_breaks WHERE time_entry_id = ?',
+      [active[0].id]
+    );
+    const breakSeconds = Number(breakRows[0].total || 0);
 
-    // Calculate duration
+    // Gross + net duration
     const clockInTime  = new Date(active[0].clock_in);
     const clockOutTime = new Date();
-    const diffMs       = clockOutTime - clockInTime;
-    const hours        = Math.floor(diffMs / 3600000);
-    const minutes      = Math.floor((diffMs % 3600000) / 60000);
-    const duration     = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+    const grossMs      = clockOutTime - clockInTime;
+    const netMs        = Math.max(0, grossMs - breakSeconds * 1000);
+    const fmt = (ms) => {
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    };
+    const breakLabel = breakSeconds > 0 ? ` (break *${fmt(breakSeconds * 1000)}*)` : '';
 
     // Announce in #attendance channel
     const timestampOut = Math.floor(clockOutTime.getTime() / 1000);
-    await postToSlack(`*${emp.name}* (${emp.department}) clocked out at <!date^${timestampOut}^{time}|${new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}> — worked *${duration}*`);
+    await postToSlack(`*${emp.name}* (${emp.department}) clocked out at <!date^${timestampOut}^{time}|${new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}> — worked *${fmt(netMs)}*${breakLabel}`);
 
   } catch (e) {
     console.error('Slack /clockout error:', e.message);
@@ -110,6 +127,74 @@ router.post('/clockout', async (req, res) => {
   }
 });
 
+// POST /break — /break start | /break stop  (pauses/resumes the work timer)
+router.post('/break', async (req, res) => {
+  const { user_id, text } = req.body;
+  res.status(200).end();
+
+  const sub = String(text || '').trim().toLowerCase();
+  const reply = (t) => axios.post(req.body.response_url, { response_type: 'ephemeral', text: t }).catch(() => {});
+
+  if (sub !== 'start' && sub !== 'stop' && sub !== 'end') {
+    return reply(`Usage: */break start* to begin a break, */break stop* to end it. Your work timer pauses during the break.`);
+  }
+
+  try {
+    const pool = await getDB();
+    const emp  = await getEmployeeBySlackId(user_id, pool);
+
+    const [active] = await pool.execute(
+      'SELECT id, clock_in FROM portal_time_entries WHERE portal_user_id=? AND clock_out IS NULL',
+      [emp.id]
+    );
+    if (active.length === 0) {
+      return reply(`You're not clocked in. Use */clockin* to start your session first.`);
+    }
+    const entryId = active[0].id;
+
+    const [openBreak] = await pool.execute(
+      'SELECT id, break_start FROM portal_breaks WHERE time_entry_id=? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1',
+      [entryId]
+    );
+
+    if (sub === 'start') {
+      if (openBreak.length > 0) {
+        const since   = new Date(openBreak[0].break_start);
+        const elapsed = Math.floor((Date.now() - since) / 60000);
+        return reply(`You're already on break (started ${elapsed}m ago). Use */break stop* to resume work.`);
+      }
+      await pool.execute(
+        `INSERT INTO portal_breaks (portal_user_id, time_entry_id, break_start, source)
+         VALUES (?, ?, NOW(), 'slack')`,
+        [emp.id, entryId]
+      );
+      return reply(`☕ Break started. Your work timer is paused. Use */break stop* when you're back.`);
+    }
+
+    // sub === 'stop' || 'end'
+    if (openBreak.length === 0) {
+      return reply(`You're not on a break right now. Use */break start* to take one.`);
+    }
+    await pool.execute(
+      `UPDATE portal_breaks
+         SET break_end = NOW(),
+             duration_seconds = TIMESTAMPDIFF(SECOND, break_start, NOW())
+       WHERE id = ?`,
+      [openBreak[0].id]
+    );
+    const since   = new Date(openBreak[0].break_start);
+    const elapsed = Math.floor((Date.now() - since) / 1000);
+    const mins    = Math.floor(elapsed / 60);
+    const secs    = elapsed % 60;
+    const dur     = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    return reply(`✅ Break ended after *${dur}*. Work timer resumed.`);
+
+  } catch (e) {
+    console.error('Slack /break error:', e.message);
+    return reply(`Something went wrong: ${e.message}`);
+  }
+});
+
 // POST /clockstatus — /clockstatus (ephemeral)
 router.post('/clockstatus', async (req, res) => {
   // Respond immediately so Slack doesn't time out
@@ -119,21 +204,47 @@ router.post('/clockstatus', async (req, res) => {
     const pool = await getDB();
     const emp  = await getEmployeeBySlackId(req.body.user_id, pool);
 
+    // Use portal_time_entries (same table /clockin and /clockout write to).
     const [active] = await pool.execute(
-      'SELECT * FROM time_entries WHERE employee_id=? AND clock_out IS NULL',
+      'SELECT id, clock_in FROM portal_time_entries WHERE portal_user_id=? AND clock_out IS NULL',
       [emp.id]
     );
 
     let text;
     if (active.length > 0) {
-      const since    = new Date(active[0].clock_in);
-      const diffMs   = Date.now() - since;
-      const hours    = Math.floor(diffMs / 3600000);
-      const minutes  = Math.floor((diffMs % 3600000) / 60000);
-      const duration = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-      const tz       = await getSlackUserTz(req.body.user_id);
-      const time     = fmtTimeInZone(since, tz);
-      text = `You're clocked in since *${time}* — *${duration}* so far.`;
+      const entryId = active[0].id;
+      const since   = new Date(active[0].clock_in);
+      const grossMs = Date.now() - since;
+
+      // Open break + total break seconds for this entry
+      const [openBreak] = await pool.execute(
+        'SELECT break_start FROM portal_breaks WHERE time_entry_id=? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1',
+        [entryId]
+      );
+      const [closedBreaks] = await pool.execute(
+        'SELECT COALESCE(SUM(duration_seconds), 0) AS total FROM portal_breaks WHERE time_entry_id=? AND break_end IS NOT NULL',
+        [entryId]
+      );
+      const closedSec = Number(closedBreaks[0].total || 0);
+      const openSec   = openBreak.length > 0 ? Math.floor((Date.now() - new Date(openBreak[0].break_start)) / 1000) : 0;
+      const breakSec  = closedSec + openSec;
+      const netMs     = Math.max(0, grossMs - breakSec * 1000);
+
+      const fmt = (ms) => {
+        const h = Math.floor(ms / 3600000);
+        const m = Math.floor((ms % 3600000) / 60000);
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      };
+      const tz   = await getSlackUserTz(req.body.user_id);
+      const time = fmtTimeInZone(since, tz);
+
+      if (openBreak.length > 0) {
+        text = `☕ On break since ${Math.floor(openSec / 60)}m ago. Clocked in at *${time}* — *${fmt(netMs)}* worked, *${fmt(breakSec * 1000)}* on break. Use */break stop* to resume.`;
+      } else if (breakSec > 0) {
+        text = `You're clocked in since *${time}* — *${fmt(netMs)}* worked (took *${fmt(breakSec * 1000)}* in breaks).`;
+      } else {
+        text = `You're clocked in since *${time}* — *${fmt(netMs)}* so far.`;
+      }
     } else {
       text = `You're not clocked in.`;
     }

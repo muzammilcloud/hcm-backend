@@ -172,10 +172,25 @@ async function sendSlackEphemeral(channel, userId, text, blocks = null) {
 async function checkOvertimePromptsForCurrentTenant() {
   const pool = await getDB();
 
+  // Net work hours = gross (clock_in → now) minus all break time for this entry.
+  // Open breaks count as still-running, so they reduce the net even before /break stop.
   const [activeEntries] = await pool.execute(`
     SELECT pte.id, pte.portal_user_id, pte.clock_in, pte.ot_prompt_sent,
            pu.name, pu.email, pu.slack_user_id,
-           TIMESTAMPDIFF(SECOND, pte.clock_in, NOW()) / 3600 as hours_worked
+           (
+             TIMESTAMPDIFF(SECOND, pte.clock_in, NOW())
+             - COALESCE((
+                 SELECT SUM(
+                   CASE
+                     WHEN pb.break_end IS NULL
+                       THEN TIMESTAMPDIFF(SECOND, pb.break_start, NOW())
+                     ELSE pb.duration_seconds
+                   END
+                 )
+                 FROM portal_breaks pb
+                 WHERE pb.time_entry_id = pte.id
+               ), 0)
+           ) / 3600 AS hours_worked
     FROM portal_time_entries pte
     JOIN portal_users pu ON pte.portal_user_id = pu.id
     WHERE pte.clock_out IS NULL AND pte.ot_prompt_sent = 0
