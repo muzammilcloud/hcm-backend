@@ -99,7 +99,7 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
     if (addonPriceId) products.push(addonPriceId);
   }
 
-  const checkout = await polar.checkouts.create({
+  const checkoutBody = {
     products,
     customerEmail: tenant.contact_email,
     successUrl,
@@ -107,7 +107,18 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
       tenant_id:   String(tenant.id),
       tenant_slug: tenant.slug,
     },
-  });
+  };
+
+  // For per-seat tiers (Growth, Business), open checkout at the 10-seat
+  // floor so the customer sees the real minimum bill at the Polar
+  // checkout page (not $3/mo for a single seat). The enforceSeatMinimum
+  // safety net on the webhook would catch a low quantity anyway, but
+  // setting it here means the customer sees the truth on the first screen.
+  if (PER_SEAT_TIERS.includes(tier)) {
+    checkoutBody.customerSeats = PER_SEAT_MIN;
+  }
+
+  const checkout = await polar.checkouts.create(checkoutBody);
 
   return { url: checkout.url, id: checkout.id };
 }
@@ -317,6 +328,7 @@ async function onSubscriptionUpserted(tenantId, sub) {
       // Add-on was added LATER (after first paid) via subscription.updated.
       // Still attempt the slot claim — they might have been first-paid as
       // a base-plan-only customer and only now qualify.
+      // (continued below)
       const conn = await platform.getConnection();
       try {
         await conn.beginTransaction();
@@ -329,6 +341,13 @@ async function onSubscriptionUpserted(tenantId, sub) {
       }
     }
   }
+
+  // Backend-enforced 10-seat minimum on per-seat tiers. Polar doesn't
+  // expose a minimum-quantity field in its product config, so we guard
+  // every subscription state change. If the new quantity is below the
+  // floor for a per-seat tier (Growth, Business), push back to the
+  // floor and update our local seat_count to match.
+  await enforceSeatMinimum(tenantId);
 }
 
 // subscription.canceled = user toggled cancel-at-period-end. Access STAYS
@@ -369,6 +388,9 @@ async function onSubscriptionReinstated(tenantId, sub) {
      WHERE id = ?`,
     [sub?.status || 'active', tenantId]
   );
+  // Re-check the per-seat floor on resume. If the user reduced their team
+  // while cancelled and then comes back, quantity could be below 10.
+  await enforceSeatMinimum(tenantId);
 }
 
 // subscription.past_due = a renewal payment failed. Tenant enters the
@@ -506,10 +528,18 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
   const kept = allCurrentPriceIds.filter(id => !allBasePriceIds.has(id));
   const newPriceIds = [newBasePriceId, ...kept];
 
-  await polar.subscriptions.update({
+  // For per-seat tiers, also push a quantity of at least PER_SEAT_MIN so
+  // the customer doesn't briefly bill at quantity=1 between the plan
+  // switch and the webhook-driven enforceSeatMinimum re-clamp.
+  const updateBody = {
     id: tenant.polar_subscription_id,
     productPriceIds: newPriceIds,
-  });
+  };
+  if (PER_SEAT_TIERS.includes(tier)) {
+    const currentSeats = Number(tenant.seat_count) || 0;
+    updateBody.quantity = Math.max(currentSeats, PER_SEAT_MIN);
+  }
+  await polar.subscriptions.update(updateBody);
 
   return { tier, cycle, pending_sync: true };
 }
@@ -743,6 +773,52 @@ async function logBillingEvent({ tenantId, type, polarEventId, payload }) {
     );
   } catch (e) {
     console.error('[billing] mirror to tenant audit_logs failed:', e.message);
+  }
+}
+
+// Hard floor on per-seat tiers. Polar's UI doesn't expose a minimum-
+// quantity field on the price config, so we enforce it server-side.
+const PER_SEAT_TIERS = ['growth', 'business'];
+const PER_SEAT_MIN   = 10;
+
+// enforceSeatMinimum(tenantId)
+// Guards against Polar quantities below the floor for per-seat tiers.
+// Called from the webhook handler whenever a subscription state change
+// could have dropped the quantity (subscription.created, .updated,
+// .active, .uncanceled). If the recorded quantity is below PER_SEAT_MIN
+// and the tier is per-seat, pushes back to PER_SEAT_MIN via the same
+// Polar subscriptions.update path syncSeatCount uses.
+//
+// Idempotent: calling with quantity already at the floor is a no-op
+// (Polar's update with the same quantity doesn't fire a new webhook).
+async function enforceSeatMinimum(tenantId) {
+  const platform = getPlatformDB();
+  try {
+    const [rows] = await platform.execute(
+      `SELECT plan, seat_count, polar_subscription_id
+       FROM tenants WHERE id = ? LIMIT 1`,
+      [tenantId]
+    );
+    const t = rows[0];
+    if (!t || !t.polar_subscription_id) return;
+    if (!PER_SEAT_TIERS.includes(t.plan)) return;
+    const current = Number(t.seat_count) || 0;
+    if (current >= PER_SEAT_MIN) return;
+
+    const polar = getPolar();
+    if (!polar) return;
+
+    await polar.subscriptions.update({
+      id: t.polar_subscription_id,
+      quantity: PER_SEAT_MIN,
+    });
+    await platform.execute(
+      'UPDATE tenants SET seat_count = ? WHERE id = ?',
+      [PER_SEAT_MIN, tenantId]
+    );
+    console.log(`[billing] enforced ${PER_SEAT_MIN}-seat minimum on tenant ${tenantId} (was ${current})`);
+  } catch (e) {
+    console.error('[billing] enforceSeatMinimum failed:', e.message);
   }
 }
 
