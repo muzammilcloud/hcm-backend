@@ -605,6 +605,33 @@ async function initTenantSchema(poolArg) {
 
   // Admin credentials are read from ADMIN_USERNAME / ADMIN_PASSWORD env vars at login time — no DB row needed.
 
+  // ── Monthly OT Reconciliation ─────────────────────────────────────────────
+  // One row per (portal_user, year, month). Snapshot of the 3-step
+  // reconciliation: how much approved OT was absorbed into required hours,
+  // how much covered idle, how much is surplus payable. Read-only summary —
+  // does NOT replace the per-session OT approval flow.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS monthly_ot_reconciliation (
+      id                 INT AUTO_INCREMENT PRIMARY KEY,
+      portal_user_id     INT NOT NULL,
+      year               SMALLINT NOT NULL,
+      month              TINYINT NOT NULL,
+      required_hours     DECIMAL(7,2) NOT NULL,
+      leave_days_full    DECIMAL(5,2) NOT NULL DEFAULT 0,
+      paid_holiday_days  DECIMAL(5,2) NOT NULL DEFAULT 0,
+      worked_net_hours   DECIMAL(7,2) NOT NULL,
+      ot_approved_hours  DECIMAL(7,2) NOT NULL,
+      idle_hours         DECIMAL(7,2) NOT NULL,
+      ot_gap_fill        DECIMAL(7,2) NOT NULL,
+      ot_idle_cover      DECIMAL(7,2) NOT NULL,
+      ot_payable_surplus DECIMAL(7,2) NOT NULL,
+      daily_hours_used   DECIMAL(4,2) NOT NULL,
+      computed_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_pu_month (portal_user_id, year, month),
+      INDEX idx_year_month (year, month)
+    ) ENGINE=InnoDB
+  `);
+
   // ── OT Requests ───────────────────────────────────────────────────────────
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS ot_requests (

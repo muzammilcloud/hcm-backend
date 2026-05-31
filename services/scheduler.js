@@ -1,6 +1,7 @@
 const { getDB, getPlatformDB, tenantContext } = require('../db');
 const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBirthdayGreetingEmail, sendAnniversaryReminderEmail, sendAnniversaryGreetingEmail } = require('./email');
 const { postLeaveReportToSlack } = require('./slack');
+const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./otReconciliation');
 
 // Read wall-clock hour/minute in a given IANA timezone (server may run in any tz).
 function nowIn(tz) {
@@ -318,6 +319,14 @@ function scheduleReports() {
 
     if (day === 1 && hour === 8 && min < 30) {
       await forEachActiveTenant('weekly-report', () => sendWeeklyReports());
+    }
+    // Reconcile the previous month BEFORE monthly reports fire, so the
+    // breakdown is already snapshotted when admins open today's email.
+    if (date === 1 && hour === 1 && min < 30) {
+      await forEachActiveTenant('monthly-ot-reconciliation', async () => {
+        const pool = await getDB();
+        await runOtReconciliationForPreviousMonth(pool);
+      });
     }
     if (date === 1 && hour === 8 && min < 30) {
       await forEachActiveTenant('monthly-report', () => sendMonthlyReports());

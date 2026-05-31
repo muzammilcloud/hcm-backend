@@ -5,6 +5,7 @@ const { requireTeamLead } = require('../middleware/auth');
 const { sendLeaveStatusEmail } = require('../services/email');
 const { notify } = require('../services/notifications');
 const { getBusinessConfig } = require('../config/business');
+const { computeForPortalUser } = require('../services/otReconciliation');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -406,6 +407,58 @@ router.get('/teamlead/team/reports/overtime', requireTeamLead, async (req, res) 
              ORDER BY date DESC, ot_hours DESC`;
     const [rows] = await pool.execute(sql, params);
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/teamlead/team/reports/monthly-reconciliation?year=&month=
+// Team-lead: monthly OT reconciliation for the lead's reports only.
+router.get('/teamlead/team/reports/monthly-reconciliation', requireTeamLead, async (req, res) => {
+  try {
+    if (!req.teamLeadEmployeeId) return res.json({ year: null, month: null, rows: [] });
+    const pool = await getDB();
+    const now   = new Date();
+    let year    = parseInt(req.query.year,  10);
+    let month   = parseInt(req.query.month, 10);
+    if (!Number.isFinite(year))  year  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    if (!Number.isFinite(month) || month < 1 || month > 12) {
+      month = now.getMonth() === 0 ? 12 : now.getMonth();
+    }
+
+    const [team] = await pool.execute(
+      `SELECT pu.id, pu.name, pu.department, pu.role
+         FROM portal_users pu
+         JOIN employees e ON e.id = pu.employee_id
+        WHERE e.reports_to = ?
+          AND pu.status = 'active'
+          AND pu.portal_role IN ('employee','team-lead')
+        ORDER BY pu.name ASC`,
+      [req.teamLeadEmployeeId]
+    );
+
+    const isCurrentOrFuture =
+      year > now.getFullYear() ||
+      (year === now.getFullYear() && month >= now.getMonth() + 1);
+    const biz = await getBusinessConfig(pool);
+
+    const out = [];
+    for (const u of team) {
+      let row;
+      if (isCurrentOrFuture) {
+        const snap = await computeForPortalUser(pool, u.id, year, month, biz);
+        row = { ...snap, source: 'live', computed_at: new Date().toISOString() };
+      } else {
+        const [rows] = await pool.execute(
+          `SELECT * FROM monthly_ot_reconciliation
+            WHERE portal_user_id = ? AND year = ? AND month = ? LIMIT 1`,
+          [u.id, year, month]
+        );
+        row = rows.length > 0
+          ? { ...rows[0], source: 'snapshot' }
+          : { ...(await computeForPortalUser(pool, u.id, year, month, biz)), source: 'live_backfill', computed_at: new Date().toISOString() };
+      }
+      out.push({ portal_user_id: u.id, name: u.name, department: u.department, role: u.role, ...row });
+    }
+    res.json({ year, month, rows: out });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
