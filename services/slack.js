@@ -1,7 +1,7 @@
 const axios  = require('axios');
 const crypto = require('crypto');
 const { getDB, getPlatformDB, tenantContext } = require('../db');
-const { OT_THRESHOLD_HOURS } = require('../config/business');
+const { getBusinessConfig } = require('../config/business');
 const { getIntegrationConfig } = require('./integrations');
 
 // Per-tenant Slack credentials with env fallback. Resolved against the
@@ -171,6 +171,11 @@ async function sendSlackEphemeral(channel, userId, text, blocks = null) {
 // active via tenantContext.run). All previous logic preserved verbatim.
 async function checkOvertimePromptsForCurrentTenant() {
   const pool = await getDB();
+  const { daily_hours: dailyHours } = await getBusinessConfig(pool);
+  // Bound to a safe numeric — dailyHours comes from a Number() coerce in
+  // getBusinessConfig, but we re-coerce here so it's safe to interpolate.
+  const dailyHoursNum = Number(dailyHours) || 9;
+  const dailyLabel = `${dailyHoursNum.toFixed(1)} Hours`;
 
   // Net work hours = gross (clock_in → now) minus all break time for this entry.
   // Open breaks count as still-running, so they reduce the net even before /break stop.
@@ -194,7 +199,7 @@ async function checkOvertimePromptsForCurrentTenant() {
     FROM portal_time_entries pte
     JOIN portal_users pu ON pte.portal_user_id = pu.id
     WHERE pte.clock_out IS NULL AND pte.ot_prompt_sent = 0
-    HAVING hours_worked >= ${OT_THRESHOLD_HOURS}
+    HAVING hours_worked >= ${dailyHoursNum}
   `);
 
   for (const entry of activeEntries) {
@@ -211,11 +216,11 @@ async function checkOvertimePromptsForCurrentTenant() {
       continue;
     }
 
-    const text = `⏰ *9 Hours Complete!*\n\nYou've been working for 9 hours today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?`;
+    const text = `⏰ *${dailyLabel} Complete!*\n\nYou've been working for ${dailyLabel.toLowerCase()} today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?`;
     const blocks = [
       {
         type: "section",
-        text: { type: "mrkdwn", text: `⏰ *9 Hours Complete!*\n\nYou've been working for *9 hours* today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?` }
+        text: { type: "mrkdwn", text: `⏰ *${dailyLabel} Complete!*\n\nYou've been working for *${dailyLabel.toLowerCase()}* today.\n\nDo you want to continue working (overtime will be tracked) or clock out now?` }
       },
       {
         type: "actions",

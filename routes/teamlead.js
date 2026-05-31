@@ -4,7 +4,7 @@ const { getDB, logEvent } = require('../db');
 const { requireTeamLead } = require('../middleware/auth');
 const { sendLeaveStatusEmail } = require('../services/email');
 const { notify } = require('../services/notifications');
-const { OT_THRESHOLD_HOURS } = require('../config/business');
+const { getBusinessConfig } = require('../config/business');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -385,12 +385,14 @@ router.get('/teamlead/team/reports/overtime', requireTeamLead, async (req, res) 
     if (!req.teamLeadEmployeeId) return res.json([]);
     const pool = await getDB();
     const { from, to, employee_id } = req.query;
+    const { daily_hours } = await getBusinessConfig(pool);
+    const dh = Number(daily_hours) || 9;
     let sql = `
       SELECT
         e.id AS employee_id, e.name, e.department, e.role, e.emp_code,
         DATE_FORMAT(te.clock_in, '%Y-%m-%d') AS date,
         ROUND(SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600), 2) AS total_hours,
-        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600) - ${OT_THRESHOLD_HOURS}), 2) AS ot_hours
+        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600) - ${dh}), 2) AS ot_hours
       FROM employees e
       JOIN time_entries te ON e.id = te.employee_id
       WHERE te.clock_out IS NOT NULL

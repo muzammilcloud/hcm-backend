@@ -4,6 +4,7 @@ const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { CURRENCIES, COUNTRIES, COUNTRY_DEFAULT_CURRENCY } = require('../services/locales');
 const { getPreset } = require('../services/taxModules');
+const { DAY_KEYS, parseWorkingDays } = require('../config/business');
 
 // GET /api/settings/locales — public lists for the picker UI
 router.get('/settings/locales', (req, res) => {
@@ -40,6 +41,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       currency, country_code,
       company_name, company_address, company_logo_url,
       slip_title, slip_signatory_name, slip_signatory_title,
+      daily_working_hours, working_days, monthly_required_hours_override,
     } = req.body || {};
 
     const [rows] = await pool.execute('SELECT * FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
@@ -48,6 +50,40 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
 
     if (country_code && !COUNTRIES.some(c => c.code === country_code)) {
       return res.status(400).json({ error: `Unknown country: ${country_code}` });
+    }
+
+    // Validate workday settings when supplied.
+    let nextDailyHours = null;
+    if (daily_working_hours != null && daily_working_hours !== '') {
+      const v = Number(daily_working_hours);
+      if (!Number.isFinite(v) || v <= 0 || v > 24) {
+        return res.status(400).json({ error: 'daily_working_hours must be between 0 and 24' });
+      }
+      nextDailyHours = v;
+    }
+
+    let nextWorkingDays = null;
+    if (working_days != null) {
+      // Accept either CSV string or array; normalize to CSV in DAY_KEYS order.
+      const raw = Array.isArray(working_days) ? working_days.join(',') : String(working_days);
+      const parsed = parseWorkingDays(raw);
+      if (parsed.size === 0) {
+        return res.status(400).json({ error: 'working_days must include at least one day' });
+      }
+      nextWorkingDays = DAY_KEYS.filter(d => parsed.has(d)).join(',');
+    }
+
+    let nextMonthlyOverride; // undefined = leave alone, null = clear, number = set
+    if (monthly_required_hours_override !== undefined) {
+      if (monthly_required_hours_override === null || monthly_required_hours_override === '') {
+        nextMonthlyOverride = null;
+      } else {
+        const v = Number(monthly_required_hours_override);
+        if (!Number.isFinite(v) || v < 0 || v > 744) {
+          return res.status(400).json({ error: 'monthly_required_hours_override must be 0–744' });
+        }
+        nextMonthlyOverride = v;
+      }
     }
 
     // Currency follows country by default. If the admin didn't supply an
@@ -74,7 +110,10 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
          company_logo_url     = COALESCE(?, company_logo_url),
          slip_title           = COALESCE(NULLIF(?, ''), slip_title),
          slip_signatory_name  = COALESCE(?, slip_signatory_name),
-         slip_signatory_title = COALESCE(?, slip_signatory_title)
+         slip_signatory_title = COALESCE(?, slip_signatory_title),
+         daily_working_hours  = COALESCE(?, daily_working_hours),
+         working_days         = COALESCE(?, working_days),
+         monthly_required_hours_override = ${nextMonthlyOverride === undefined ? 'monthly_required_hours_override' : '?'}
        WHERE singleton_key = 1`,
       [
         nextCurrency,
@@ -85,6 +124,9 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
         slip_title     ?? null,
         slip_signatory_name  ?? null,
         slip_signatory_title ?? null,
+        nextDailyHours,
+        nextWorkingDays,
+        ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
       ]
     );
 

@@ -174,6 +174,9 @@ async function initTenantSchema(poolArg) {
   try { await pool.execute(`ALTER TABLE portal_users ADD UNIQUE KEY uq_portal_users_google_sub (google_sub)`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN preferred_locale VARCHAR(10) NULL AFTER status`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN default_locale VARCHAR(10) NOT NULL DEFAULT 'en' AFTER country_code`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN daily_working_hours DECIMAL(4,2) NOT NULL DEFAULT 9.00`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN working_days VARCHAR(40) NOT NULL DEFAULT 'mon,tue,wed,thu,fri'`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN monthly_required_hours_override DECIMAL(6,2) NULL DEFAULT NULL`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}
@@ -339,6 +342,10 @@ async function initTenantSchema(poolArg) {
       slip_title           VARCHAR(64)  DEFAULT 'Salary Slip',
       slip_signatory_name  VARCHAR(255),
       slip_signatory_title VARCHAR(100),
+
+      daily_working_hours              DECIMAL(4,2) NOT NULL DEFAULT 9.00,
+      working_days                     VARCHAR(40)  NOT NULL DEFAULT 'mon,tue,wed,thu,fri',
+      monthly_required_hours_override  DECIMAL(6,2) NULL DEFAULT NULL,
 
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

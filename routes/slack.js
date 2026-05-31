@@ -2,7 +2,7 @@ const express = require('express');
 const axios   = require('axios');
 const router  = express.Router();
 const { getDB, logEvent } = require('../db');
-const { OT_THRESHOLD_MS } = require('../config/business');
+const { getBusinessConfig } = require('../config/business');
 const {
   getEmployeeBySlackId,
   postToSlack,
@@ -127,7 +127,8 @@ router.post('/clockout', async (req, res) => {
   }
 });
 
-// POST /break — /break start | /break stop  (pauses/resumes the work timer)
+// POST /break — toggles a break (or use 'start' / 'stop' to be explicit).
+// Plain /break: if you're working, start a break; if you're on a break, end it.
 router.post('/break', async (req, res) => {
   const { user_id, text } = req.body;
   res.status(200).end();
@@ -135,8 +136,8 @@ router.post('/break', async (req, res) => {
   const sub = String(text || '').trim().toLowerCase();
   const reply = (t) => axios.post(req.body.response_url, { response_type: 'ephemeral', text: t }).catch(() => {});
 
-  if (sub !== 'start' && sub !== 'stop' && sub !== 'end') {
-    return reply(`Usage: */break start* to begin a break, */break stop* to end it. Your work timer pauses during the break.`);
+  if (sub !== '' && sub !== 'start' && sub !== 'stop' && sub !== 'end') {
+    return reply(`Usage: */break* to toggle a break, or */break start* / */break stop* to be explicit. Your work timer pauses during the break.`);
   }
 
   try {
@@ -156,24 +157,31 @@ router.post('/break', async (req, res) => {
       'SELECT id, break_start FROM portal_breaks WHERE time_entry_id=? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1',
       [entryId]
     );
+    const onBreak = openBreak.length > 0;
 
-    if (sub === 'start') {
-      if (openBreak.length > 0) {
+    // Resolve action: plain /break toggles; explicit start/stop overrides.
+    const action = sub === '' ? (onBreak ? 'stop' : 'start')
+                  : (sub === 'start' ? 'start' : 'stop');
+
+    if (action === 'start') {
+      if (onBreak) {
+        // Only reachable via explicit /break start while already on break.
         const since   = new Date(openBreak[0].break_start);
         const elapsed = Math.floor((Date.now() - since) / 60000);
-        return reply(`You're already on break (started ${elapsed}m ago). Use */break stop* to resume work.`);
+        return reply(`You're already on break (started ${elapsed}m ago). Use */break* to end it.`);
       }
       await pool.execute(
         `INSERT INTO portal_breaks (portal_user_id, time_entry_id, break_start, source)
          VALUES (?, ?, NOW(), 'slack')`,
         [emp.id, entryId]
       );
-      return reply(`☕ Break started. Your work timer is paused. Use */break stop* when you're back.`);
+      return reply(`☕ Break started. Your work timer is paused. Type */break* again when you're back.`);
     }
 
-    // sub === 'stop' || 'end'
-    if (openBreak.length === 0) {
-      return reply(`You're not on a break right now. Use */break start* to take one.`);
+    // action === 'stop'
+    if (!onBreak) {
+      // Only reachable via explicit /break stop with no break running.
+      return reply(`You're not on a break right now. Use */break* to take one.`);
     }
     await pool.execute(
       `UPDATE portal_breaks
@@ -294,23 +302,25 @@ router.post('/interactive', async (req, res) => {
         ['continue', timeEntryId]
       );
 
+      const { daily_hours: dh1 } = await getBusinessConfig(pool);
       await axios.post(payload.response_url, {
         replace_original: true,
-        text: `✅ *Overtime Approved*\n\nYou chose to continue working. All time after 9 hours will be tracked as overtime.\n\nClock out when you're done!`,
+        text: `✅ *Overtime Approved*\n\nYou chose to continue working. All time after ${dh1.toFixed(1)} hours will be tracked as overtime.\n\nClock out when you're done!`,
       });
 
       console.log(`✅ Employee chose to continue working (OT approved) - Entry ${timeEntryId}`);
 
     } else if (actionId === 'ot_clockout') {
-      // Employee chose to clock out at 9 hours
+      // Employee chose to clock out at the daily threshold
       const [entry] = await pool.execute(
         'SELECT * FROM portal_time_entries WHERE id = ?',
         [timeEntryId]
       );
 
       if (entry.length > 0 && !entry[0].clock_out) {
+        const { daily_hours: dh, daily_ms } = await getBusinessConfig(pool);
         const clockIn  = new Date(entry[0].clock_in);
-        const clockOut = new Date(clockIn.getTime() + (OT_THRESHOLD_MS));
+        const clockOut = new Date(clockIn.getTime() + daily_ms);
 
         await pool.execute(
           'UPDATE portal_time_entries SET clock_out = ?, ot_decision = ? WHERE id = ?',
@@ -329,19 +339,19 @@ router.post('/interactive', async (req, res) => {
           department: pu?.department,
           role: pu?.role,
           event: 'clock_out',
-          detail: `Clocked out at 9h via OT prompt`
+          detail: `Clocked out at ${dh.toFixed(1)}h via OT prompt`
         });
 
         const tz = await getSlackUserTz(userId);
         const clockOutTimestamp = Math.floor(clockOut.getTime() / 1000);
-        await postToSlack(`🔴 *${pu?.name}* (${pu?.department}) clocked out (auto at 9h) at <!date^${clockOutTimestamp}^{time}|${fmtTimeInZone(clockOut, tz)}>`);
+        await postToSlack(`🔴 *${pu?.name}* (${pu?.department}) clocked out (auto at ${dh.toFixed(1)}h) at <!date^${clockOutTimestamp}^{time}|${fmtTimeInZone(clockOut, tz)}>`);
 
         await axios.post(payload.response_url, {
           replace_original: true,
-          text: `✅ *Clocked Out*\n\nYou've been automatically clocked out after exactly *9 hours*.\n\nNo overtime recorded. Great work today!`,
+          text: `✅ *Clocked Out*\n\nYou've been automatically clocked out after exactly *${dh.toFixed(1)} hours*.\n\nNo overtime recorded. Great work today!`,
         });
 
-        console.log(`✅ Employee clocked out at 9h (no OT) - ${pu?.name}`);
+        console.log(`✅ Employee clocked out at ${dh.toFixed(1)}h (no OT) - ${pu?.name}`);
       }
 
     } else if (actionId === 'ot_clockout_yes' || actionId === 'ot_clockout_no') {
@@ -355,14 +365,15 @@ router.post('/interactive', async (req, res) => {
       if (decision === 'stopped') {
         const [entry] = await pool.execute('SELECT * FROM portal_time_entries WHERE id = ?', [timeEntryId]);
         if (entry.length > 0) {
+          const { daily_hours: dh, daily_ms } = await getBusinessConfig(pool);
           const clockIn  = new Date(entry[0].clock_in);
-          const clockOut = new Date(clockIn.getTime() + (OT_THRESHOLD_MS));
+          const clockOut = new Date(clockIn.getTime() + daily_ms);
 
           await pool.execute('UPDATE portal_time_entries SET clock_out = ? WHERE id = ?', [clockOut, timeEntryId]);
 
           await axios.post(payload.response_url, {
             replace_original: true,
-            text: `✅ Hours capped at *9.0h*. No overtime recorded.`,
+            text: `✅ Hours capped at *${dh.toFixed(1)}h*. No overtime recorded.`,
           });
         }
       } else {

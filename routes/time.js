@@ -3,7 +3,7 @@ const router  = express.Router();
 const { getDB, logEvent } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { postToSlack, getSlackUserIdByEmail, sendSlackDM } = require('../services/slack');
-const { OT_THRESHOLD_HOURS, OT_THRESHOLD_MS } = require('../config/business');
+const { getBusinessConfig } = require('../config/business');
 
 // POST /api/employee/clock-in
 router.post('/employee/clock-in', requireEmployee, async (req, res) => {
@@ -40,8 +40,11 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
 
     const entry       = active[0];
     const hoursWorked = (Date.now() - new Date(entry.clock_in).getTime()) / 3600000;
+    const biz         = await getBusinessConfig(pool);
+    const dailyHours  = biz.daily_hours;
+    const dailyMs     = biz.daily_ms;
 
-    if (hoursWorked >= OT_THRESHOLD_HOURS && !entry.ot_decision) {
+    if (hoursWorked >= dailyHours && !entry.ot_decision) {
       const [puInfo] = await pool.execute('SELECT * FROM portal_users WHERE id=?', [req.portalUserId]);
       const pu = puInfo[0];
       let slackUserId = pu?.slack_user_id;
@@ -50,14 +53,15 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
         if (slackUserId) await pool.execute('UPDATE portal_users SET slack_user_id=? WHERE id=?', [slackUserId, pu.id]);
       }
       if (slackUserId) {
+        const dailyLabel = `${dailyHours.toFixed(1)} hours`;
         const blocks = [
-          { type: "section", text: { type: "mrkdwn", text: `⚠️ *You worked more than 9 hours today*\n\nYou worked *${hoursWorked.toFixed(1)} hours*.\n\nShould we count the extra time as overtime?` } },
+          { type: "section", text: { type: "mrkdwn", text: `⚠️ *You worked more than ${dailyLabel} today*\n\nYou worked *${hoursWorked.toFixed(1)} hours*.\n\nShould we count the extra time as overtime?` } },
           { type: "actions", block_id: `ot_clockout_${entry.id}`, elements: [
             { type: "button", text: { type: "plain_text", text: "Yes, Count as OT", emoji: true }, style: "primary", action_id: "ot_clockout_yes", value: String(entry.id) },
-            { type: "button", text: { type: "plain_text", text: "No, Cap at 9 Hours", emoji: true }, action_id: "ot_clockout_no", value: String(entry.id) }
+            { type: "button", text: { type: "plain_text", text: `No, Cap at ${dailyHours.toFixed(1)} Hours`, emoji: true }, action_id: "ot_clockout_no", value: String(entry.id) }
           ]}
         ];
-        await sendSlackDM(slackUserId, `⚠️ You worked more than 9 hours today`, blocks);
+        await sendSlackDM(slackUserId, `⚠️ You worked more than ${dailyLabel} today`, blocks);
       }
       return res.json({ requires_ot_decision: true, time_entry_id: entry.id, hours_worked: hoursWorked.toFixed(2) });
     }
@@ -72,7 +76,7 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     );
 
     if (entry.ot_decision === 'stopped') {
-      const clockOut = new Date(new Date(entry.clock_in).getTime() + OT_THRESHOLD_MS);
+      const clockOut = new Date(new Date(entry.clock_in).getTime() + dailyMs);
       await pool.execute('UPDATE portal_time_entries SET clock_out=? WHERE id=?', [clockOut, entry.id]);
     } else {
       await pool.execute('UPDATE portal_time_entries SET clock_out=NOW() WHERE id=?', [entry.id]);
@@ -81,8 +85,8 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM portal_time_entries WHERE id=?', [entry.id]);
     const sessionHours = (new Date(rows[0].clock_out) - new Date(rows[0].clock_in)) / 3600000;
 
-    if (sessionHours > OT_THRESHOLD_HOURS) {
-      const otHours = parseFloat((sessionHours - OT_THRESHOLD_HOURS).toFixed(2));
+    if (sessionHours > dailyHours) {
+      const otHours = parseFloat((sessionHours - dailyHours).toFixed(2));
       if (otHours > 0) {
         await pool.execute(
           `INSERT INTO ot_requests (time_entry_id, employee_id, date, total_hours, ot_hours, idle_deducted)
