@@ -8,6 +8,16 @@ const PLATFORM_PREFIXES = [
   '/api/signup',     // public signup
   '/api/slug-check', // public slug availability lookup
   '/api/tenant',     // tenant lookup (whoami for FE)
+  // Google OAuth redirect-flow endpoints. The callback comes from Google
+  // with Referer=accounts.google.com (not a tenant subdomain), so the
+  // default Referer-based slug resolution would 404 here. /start and
+  // /exchange don't need tenant resolution either — they carry the slug
+  // explicitly (in ?slug= and the handoff token respectively). The legacy
+  // GIS endpoints (/verify, /decode) DO need tenant context and are
+  // therefore NOT listed here.
+  '/api/auth/google/start',
+  '/api/auth/google/callback',
+  '/api/auth/google/exchange',
   '/health',
 ];
 
