@@ -4,17 +4,20 @@ const { getDB } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { calculateSalaryBreakdown } = require('../services/salary');
 
-// GET /api/salaries — Admin: all employees' salaries
+// GET /api/salaries — Admin: every employee in the workspace.
+// Includes employees who haven't activated their portal account yet
+// (is_active=0) so admins can pre-configure salary at hire time. The
+// previous WHERE is_active=1 hid newly-created employees and made it
+// look like salary saves were silently failing.
 router.get('/salaries', requireAdmin, async (req, res) => {
   try {
     const pool = await getDB();
     const [rows] = await pool.execute(`
-      SELECT e.id, e.name, e.email, e.department, e.role,
+      SELECT e.id, e.name, e.email, e.department, e.role, e.is_active,
              s.basic_salary, s.house_rent, s.conveyance, s.medical, s.utilities,
              s.created_at, s.updated_at
       FROM employees e
       LEFT JOIN employee_salaries s ON e.id = s.employee_id
-      WHERE e.is_active = 1
       ORDER BY e.name
     `);
     res.json(rows);

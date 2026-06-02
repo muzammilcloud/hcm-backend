@@ -145,6 +145,10 @@ router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
         [Number(b.band_from), b.band_to == null ? null : Number(b.band_to), Number(b.rate), (i + 1) * 10]
       );
     }
+    // tax_enabled column is NOT NULL DEFAULT 1 — on a fresh insert we must
+    // never pass NULL. On UPDATE, COALESCE keeps the existing value when the
+    // caller doesn't supply one.
+    const taxEnabledInsert = tax_enabled == null ? 1 : (tax_enabled ? 1 : 0);
     await pool.execute(
       `INSERT INTO tax_bracket_meta (singleton_key, source_country, preset_year, confirmed, confirmed_at, tax_enabled)
        VALUES (1, ?, ?, ?, ?, ?)
@@ -153,9 +157,8 @@ router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
          preset_year    = VALUES(preset_year),
          confirmed      = VALUES(confirmed),
          confirmed_at   = VALUES(confirmed_at),
-         tax_enabled    = COALESCE(VALUES(tax_enabled), tax_enabled)`,
-      [source_country, preset_year, confirmed ? 1 : 0, confirmed ? new Date() : null,
-       tax_enabled == null ? null : (tax_enabled ? 1 : 0)]
+         tax_enabled    = ${tax_enabled == null ? 'tax_enabled' : 'VALUES(tax_enabled)'}`,
+      [source_country, preset_year, confirmed ? 1 : 0, confirmed ? new Date() : null, taxEnabledInsert]
     );
 
     const rows = await readBrackets(pool);

@@ -35,20 +35,27 @@ async function getReconciliationRow(pool, portalUserId, year, month) {
 }
 
 // GET /api/reports/summary
+// Summary aggregates over portal_time_entries (the table all clock-ins
+// actually write to), joined back to employees via portal_users.employee_id.
+// The previous query joined the legacy time_entries table and always
+// returned 0h on tenants that only used the portal flow.
 router.get('/reports/summary', requireAdmin, async (req, res) => {
   const { from, to } = req.query;
   try {
     const pool = await getDB();
     let query = `
       SELECT e.id, e.name, e.department, e.role,
-        COUNT(te.id) as total_sessions,
-        ROUND(SUM(TIMESTAMPDIFF(SECOND, te.clock_in, COALESCE(te.clock_out, NOW())) / 3600), 2) as total_hours
-      FROM employees e LEFT JOIN time_entries te ON e.id = te.employee_id WHERE 1=1
+        COUNT(pte.id) as total_sessions,
+        ROUND(SUM(TIMESTAMPDIFF(SECOND, pte.clock_in, COALESCE(pte.clock_out, NOW())) / 3600), 2) as total_hours
+      FROM employees e
+      LEFT JOIN portal_users pu  ON pu.employee_id = e.id
+      LEFT JOIN portal_time_entries pte ON pte.portal_user_id = pu.id
+      WHERE 1=1
     `;
     const params = [];
     if (req.query.department) { query += ' AND e.department = ?'; params.push(req.query.department); }
-    if (from) { query += ' AND (te.clock_in IS NULL OR DATE(te.clock_in) >= ?)'; params.push(from); }
-    if (to)   { query += ' AND (te.clock_in IS NULL OR DATE(te.clock_in) <= ?)'; params.push(to); }
+    if (from) { query += ' AND (pte.clock_in IS NULL OR DATE(pte.clock_in) >= ?)'; params.push(from); }
+    if (to)   { query += ' AND (pte.clock_in IS NULL OR DATE(pte.clock_in) <= ?)'; params.push(to); }
     query += ' GROUP BY e.id ORDER BY total_hours DESC';
     const [rows] = await pool.execute(query, params);
     res.json(rows);

@@ -7,6 +7,21 @@ const { recordAudit } = require('../services/audit');
 const { rejectIfAtSeatCap, getCurrentSeatCount } = require('../services/seatLimits');
 const { syncSeatCount } = require('../services/billing');
 
+// Strip sensitive columns before serializing an employee row to JSON.
+// `password_hash` was historically projected by `SELECT e.*` queries; even
+// when null this is information disclosure — and would leak a real bcrypt
+// hash for any employee who'd activated their portal account.
+const SENSITIVE_EMPLOYEE_FIELDS = ['password_hash'];
+function sanitize(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = { ...row };
+  for (const k of SENSITIVE_EMPLOYEE_FIELDS) delete out[k];
+  return out;
+}
+function sanitizeMany(rows) {
+  return Array.isArray(rows) ? rows.map(sanitize) : rows;
+}
+
 // Fire-and-forget seat sync after a mutation. Recomputes the live count
 // (cheap, indexed COUNT) and pushes to billing. Never awaited by the
 // route — the employee response shouldn't wait on a Polar API call.
@@ -37,7 +52,7 @@ router.post('/employees/data', requireAdmin, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [result.insertId]);
     await logEvent(pool, { employee_id: result.insertId, employee_name: displayName, department: department || 'General', role: role || 'Employee', event: 'added', detail: `Employee record created (no invite)` });
     fireSeatSync(req);
-    res.json({ ...rows[0], has_pending_invite: 0 });
+    res.json({ ...sanitize(rows[0]), has_pending_invite: 0 });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Email already exists' });
     res.status(500).json({ error: e.message });
@@ -86,7 +101,7 @@ router.post('/employees', requireAdmin, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [empId]);
     await logEvent(pool, { employee_id: empId, employee_name: empName, department: rows[0].department, role: rows[0].role, event: 'invited', detail: `Invited via email to ${email}` });
     fireSeatSync(req);
-    res.json({ ...rows[0], email_sent: emailSent, invite_token: inviteToken, has_pending_invite: 1 });
+    res.json({ ...sanitize(rows[0]), email_sent: emailSent, invite_token: inviteToken, has_pending_invite: 1 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -134,7 +149,7 @@ router.get('/employees', requireAdmin, async (req, res) => {
       LEFT JOIN employees tl ON tl.id = e.reports_to
       ORDER BY e.name
     `);
-    res.json(rows);
+    res.json(sanitizeMany(rows));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -153,7 +168,7 @@ router.put('/employees/:id', requireAdmin, async (req, res) => {
       [req.params.id]
     );
     await logEvent(pool, { employee_id: rows[0].id, employee_name: rows[0].name, department: rows[0].department, role: rows[0].role, event: 'edited', detail: `Updated to: ${displayName} | ${role} | ${department}` });
-    res.json(rows[0]);
+    res.json(sanitize(rows[0]));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
