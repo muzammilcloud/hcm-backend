@@ -79,8 +79,18 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
   const { name, first_name, last_name, email, department, role, employee_id, portal_role } = req.body;
   const displayName = (first_name && last_name) ? `${first_name} ${last_name}` : (name || '');
   if (!displayName || !email) return res.status(400).json({ error: 'Name and email required' });
+  // Normalize common variants ('team_lead' → 'team-lead') before validating;
+  // reject everything else explicitly so callers see a clear error instead
+  // of a silent downgrade to 'employee'.
   const validPortalRoles = ['employee', 'team-lead', 'sys-admin'];
-  const pRole = validPortalRoles.includes(portal_role) ? portal_role : 'employee';
+  const requestedRole  = portal_role == null ? 'employee'
+                       : String(portal_role).toLowerCase().replace(/_/g, '-');
+  if (!validPortalRoles.includes(requestedRole)) {
+    return res.status(400).json({
+      error: `Invalid portal_role: ${portal_role}. Must be one of ${validPortalRoles.join(', ')}.`,
+    });
+  }
+  const pRole = requestedRole;
   try {
     const pool = await getDB();
 
