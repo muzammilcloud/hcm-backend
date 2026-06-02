@@ -6,6 +6,7 @@ const { sendLeaveStatusEmail } = require('../services/email');
 const { notify } = require('../services/notifications');
 const { getBusinessConfig } = require('../config/business');
 const { computeForPortalUser } = require('../services/otReconciliation');
+const { sanitizePortalUsers } = require('../services/sanitize');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -313,7 +314,7 @@ router.get('/teamlead/team/portal-users', requireTeamLead, async (req, res) => {
        ORDER BY pu.name`,
       [req.teamLeadEmployeeId]
     );
-    res.json(rows);
+    res.json(sanitizePortalUsers(rows));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

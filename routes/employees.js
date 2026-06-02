@@ -6,21 +6,7 @@ const { sendInviteEmail } = require('../services/email');
 const { recordAudit } = require('../services/audit');
 const { rejectIfAtSeatCap, getCurrentSeatCount } = require('../services/seatLimits');
 const { syncSeatCount } = require('../services/billing');
-
-// Strip sensitive columns before serializing an employee row to JSON.
-// `password_hash` was historically projected by `SELECT e.*` queries; even
-// when null this is information disclosure — and would leak a real bcrypt
-// hash for any employee who'd activated their portal account.
-const SENSITIVE_EMPLOYEE_FIELDS = ['password_hash'];
-function sanitize(row) {
-  if (!row || typeof row !== 'object') return row;
-  const out = { ...row };
-  for (const k of SENSITIVE_EMPLOYEE_FIELDS) delete out[k];
-  return out;
-}
-function sanitizeMany(rows) {
-  return Array.isArray(rows) ? rows.map(sanitize) : rows;
-}
+const { sanitizeEmployee: sanitize, sanitizeEmployees: sanitizeMany } = require('../services/sanitize');
 
 // Fire-and-forget seat sync after a mutation. Recomputes the live count
 // (cheap, indexed COUNT) and pushes to billing. Never awaited by the

@@ -4,6 +4,7 @@ const { getDB, generateToken, logEvent } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { sendInviteEmail } = require('../services/email');
 const { recordAudit } = require('../services/audit');
+const { sanitizePortalUser, sanitizePortalUsers } = require('../services/sanitize');
 
 // Build the set-password URL for an invite, scoped to the current tenant.
 // Without this, sendInviteEmail falls back to process.env.FRONTEND_URL
@@ -29,7 +30,7 @@ router.get('/portal-users', requireAdmin, async (req, res) => {
       LEFT JOIN employees e ON pu.employee_id = e.id
       ORDER BY pu.created_at DESC
     `);
-    res.json(rows);
+    res.json(sanitizePortalUsers(rows));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -127,7 +128,9 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
       after: { email, name: displayName, portal_role: pRole, department: department || 'General' },
     });
 
-    res.json({ ...rows[0], email_sent: emailSent });
+    // Return the sanitized row, then re-attach the freshly-generated invite
+    // token so the FE can copy/paste the activation link this one time.
+    res.json({ ...sanitizePortalUser(rows[0]), email_sent: emailSent, invite_token: inviteToken });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -153,7 +156,7 @@ router.put('/portal-users/:id', requireAdmin, async (req, res) => {
       LEFT JOIN employees e ON pu.employee_id = e.id
       WHERE pu.id = ?
     `, [req.params.id]);
-    res.json(updated[0]);
+    res.json(sanitizePortalUser(updated[0]));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
