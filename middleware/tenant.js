@@ -81,7 +81,22 @@ async function tenantMiddleware(req, res, next) {
   const allowedWhenLocked = isBillingPath || isAuthPath;
 
   if (tenant.status === 'deleted') {
-    return res.status(410).json({ error: 'Workspace no longer available' });
+    // Diagnostic: a QA pass flagged /api/employees specifically returning
+    // 410 while sibling endpoints returned 200 on the same session. The
+    // 410 path here is uniform across all routes, so a recurrence likely
+    // means a stale X-Tenant header pointed at a different (deleted)
+    // tenant. Log enough to reproduce: which slug was resolved, what the
+    // request looked like, and which route hit it.
+    console.warn('[tenant] 410 returned', JSON.stringify({
+      slug, tenantId: tenant.id, status: tenant.status,
+      path: req.path, header: req.headers['x-tenant'] || null,
+      origin: req.headers.origin || null, host: req.hostname,
+    }));
+    return res.status(410).json({
+      error:    'Workspace no longer available',
+      slug,                            // <- visible to caller so debugging is straightforward
+      tenant_status: tenant.status,
+    });
   }
   if ((tenant.status === 'suspended' || tenant.status === 'expired') && !allowedWhenLocked) {
     return res.status(402).json({
