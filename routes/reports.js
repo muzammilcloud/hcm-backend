@@ -5,6 +5,7 @@ const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { sendWeeklyReports, sendMonthlyReports, sendMonthlySalarySlips } = require('../services/scheduler');
 const { getBusinessConfig } = require('../config/business');
 const { computeForPortalUser, runForMonth: runOtReconciliationForMonth } = require('../services/otReconciliation');
+const { requireFeature } = require('../middleware/features');
 
 // Read the reconciliation snapshot for past months, compute live for current
 // month. Returns a normalized row (same shape either way) for one portal_user.
@@ -176,7 +177,7 @@ router.get('/reports/overtime', requireAdmin, async (req, res) => {
 
 // GET /api/reports/monthly-reconciliation?year=&month=&portal_user_id=
 // Admin: all employees (optional filter to one). Returns a list.
-router.get('/reports/monthly-reconciliation', requireAdmin, async (req, res) => {
+router.get('/reports/monthly-reconciliation', requireAdmin, requireFeature('monthly_reconciliation'), async (req, res) => {
   try {
     const pool = await getDB();
     const now   = new Date();
@@ -219,7 +220,7 @@ router.get('/reports/monthly-reconciliation', requireAdmin, async (req, res) => 
 
 // POST /api/reports/monthly-reconciliation/run?year=&month= — Admin
 // Manual re-run for a specific month. Useful after fixing leave/holiday data.
-router.post('/reports/monthly-reconciliation/run', requireAdmin, async (req, res) => {
+router.post('/reports/monthly-reconciliation/run', requireAdmin, requireFeature('monthly_reconciliation'), async (req, res) => {
   try {
     const pool = await getDB();
     const year  = parseInt(req.query.year, 10);
@@ -233,7 +234,7 @@ router.post('/reports/monthly-reconciliation/run', requireAdmin, async (req, res
 });
 
 // GET /api/employee/monthly-reconciliation?year=&month= — Employee: own
-router.get('/employee/monthly-reconciliation', requireEmployee, async (req, res) => {
+router.get('/employee/monthly-reconciliation', requireEmployee, requireFeature('monthly_reconciliation'), async (req, res) => {
   try {
     const pool = await getDB();
     const now   = new Date();

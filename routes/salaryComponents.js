@@ -2,6 +2,12 @@ const express = require('express');
 const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/features');
+
+// Mutation routes (create / update / delete / reorder) require the
+// custom_salary_components feature. GET is unconditional so Starter
+// admins can still see what's configured at the workspace level.
+const gateMutations = requireFeature('custom_salary_components');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Validation helpers
@@ -60,7 +66,7 @@ router.get('/salary/components', requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/salary/components — create
-router.post('/salary/components', requireAdmin, async (req, res, next) => {
+router.post('/salary/components', requireAdmin, gateMutations, async (req, res, next) => {
   try {
     const errors = validate(req.body);
     if (errors.length) return res.status(400).json({ error: 'Invalid input', details: errors });
@@ -110,7 +116,7 @@ router.post('/salary/components', requireAdmin, async (req, res, next) => {
 });
 
 // PUT /api/salary/components/:id — update
-router.put('/salary/components/:id', requireAdmin, async (req, res, next) => {
+router.put('/salary/components/:id', requireAdmin, gateMutations, async (req, res, next) => {
   try {
     const pool = await getDB();
     const [rows] = await pool.execute('SELECT * FROM salary_components WHERE id = ?', [req.params.id]);
@@ -162,7 +168,7 @@ router.put('/salary/components/:id', requireAdmin, async (req, res, next) => {
 });
 
 // DELETE /api/salary/components/:id — delete (refuses system-managed)
-router.delete('/salary/components/:id', requireAdmin, async (req, res, next) => {
+router.delete('/salary/components/:id', requireAdmin, gateMutations, async (req, res, next) => {
   try {
     const pool = await getDB();
     const [rows] = await pool.execute('SELECT * FROM salary_components WHERE id = ?', [req.params.id]);
@@ -176,7 +182,7 @@ router.delete('/salary/components/:id', requireAdmin, async (req, res, next) => 
 });
 
 // POST /api/salary/components/reorder — accepts { order: [ids...] }
-router.post('/salary/components/reorder', requireAdmin, async (req, res, next) => {
+router.post('/salary/components/reorder', requireAdmin, gateMutations, async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body?.order) ? req.body.order : null;
     if (!ids || ids.length === 0) return res.status(400).json({ error: 'order must be a non-empty array of component ids' });

@@ -2,8 +2,14 @@ const express = require('express');
 const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/features');
 const { PRESETS, getPreset, listSupportedCountries, calculateTax } = require('../services/taxModules');
 const { recordAudit } = require('../services/audit');
+
+// Mutations to the workspace's tax configuration require custom_tax_brackets.
+// GETs (list, calc preview, preset preview) stay open so Starter admins can
+// see what's active.
+const gateTaxMutations = requireFeature('custom_tax_brackets');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -128,7 +134,7 @@ router.get('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
 });
 
 // PUT /api/salary/tax/brackets — replace all brackets atomically
-router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
+router.put('/salary/tax/brackets', requireAdmin, gateTaxMutations, async (req, res, next) => {
   try {
     const { brackets, source_country = null, preset_year = null, confirmed = true, tax_enabled } = req.body || {};
     const errors = validateBrackets(brackets);
@@ -174,7 +180,7 @@ router.put('/salary/tax/brackets', requireAdmin, async (req, res, next) => {
 });
 
 // PUT /api/salary/tax/enabled — quick on/off toggle, doesn't touch brackets
-router.put('/salary/tax/enabled', requireAdmin, async (req, res, next) => {
+router.put('/salary/tax/enabled', requireAdmin, gateTaxMutations, async (req, res, next) => {
   try {
     const enabled = req.body?.enabled ? 1 : 0;
     const pool = await getDB();

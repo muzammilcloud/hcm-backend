@@ -47,6 +47,7 @@ const setupRoutes            = require('./routes/setup');
 const auditRoutes            = require('./routes/audit');
 const billingRoutes          = require('./routes/billing');
 const desktopRoutes          = require('./routes/desktop');
+const featuresRoutes         = require('./routes/features');
 const polarWebhookRoutes     = require('./routes/webhooks/polar');
 const { router: googleAuthRoutes } = require('./routes/googleAuth');
 
@@ -128,6 +129,7 @@ app.use('/api', setupRoutes);
 app.use('/api', auditRoutes);
 app.use('/api', billingRoutes);
 app.use('/api', desktopRoutes);
+app.use('/api', featuresRoutes);
 app.use('/api', googleAuthRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Tickin API' }));

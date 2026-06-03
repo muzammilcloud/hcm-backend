@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/features');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/audit
@@ -19,7 +20,7 @@ const { requireAdmin } = require('../middleware/auth');
 //   page_size    — default 50, max 200
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/audit', requireAdmin, async (req, res, next) => {
+router.get('/audit', requireAdmin, requireFeature('audit_log'), async (req, res, next) => {
   try {
     const {
       action, actor_email, target_type, from, to,

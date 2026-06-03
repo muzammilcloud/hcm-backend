@@ -2,6 +2,7 @@ const { getDB, getPlatformDB, tenantContext } = require('../db');
 const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBirthdayGreetingEmail, sendAnniversaryReminderEmail, sendAnniversaryGreetingEmail } = require('./email');
 const { postLeaveReportToSlack } = require('./slack');
 const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./otReconciliation');
+const { tenantHas } = require('./features');
 
 // Read wall-clock hour/minute in a given IANA timezone (server may run in any tz).
 function nowIn(tz) {
@@ -284,8 +285,10 @@ async function forEachActiveTenant(label, fn) {
   let tenants = [];
   try {
     const platform = getPlatformDB();
+    // Include `plan` so callbacks can do plan-based feature gating
+    // (tenantHas reads tenant.plan).
     const [rows] = await platform.execute(
-      `SELECT id, slug, db_name FROM tenants WHERE status = 'active'`
+      `SELECT id, slug, db_name, plan FROM tenants WHERE status = 'active'`
     );
     tenants = rows;
   } catch (e) {
@@ -322,14 +325,20 @@ function scheduleReports() {
     }
     // Reconcile the previous month BEFORE monthly reports fire, so the
     // breakdown is already snapshotted when admins open today's email.
+    // Gated by plan: Starter tenants skip both jobs (monthly_reconciliation
+    // + monthly_reports are Growth-only features).
     if (date === 1 && hour === 1 && min < 30) {
-      await forEachActiveTenant('monthly-ot-reconciliation', async () => {
+      await forEachActiveTenant('monthly-ot-reconciliation', async (tenant) => {
+        if (!tenantHas(tenant, 'monthly_reconciliation')) return;
         const pool = await getDB();
         await runOtReconciliationForPreviousMonth(pool);
       });
     }
     if (date === 1 && hour === 8 && min < 30) {
-      await forEachActiveTenant('monthly-report', () => sendMonthlyReports());
+      await forEachActiveTenant('monthly-report', (tenant) => {
+        if (!tenantHas(tenant, 'monthly_reports')) return;
+        return sendMonthlyReports();
+      });
     }
     if (date === 3 && hour === 9 && min < 30) {
       await forEachActiveTenant('monthly-salary-slips', () => sendMonthlySalarySlips());
