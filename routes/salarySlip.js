@@ -5,30 +5,24 @@ const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { calculateSlip } = require('../services/salaryCalc');
 const { generateSalarySlipPdf } = require('../services/pdf');
 
-// Helper — load employee + slip + workspace settings + the recipient locale
-// (the EMPLOYEE'S locale, not the requester's, so a Japanese employee's
-// slip is in Japanese even if the admin downloading it is in en).
-async function loadSlipBundle(pool, employeeId, fallbackLocale) {
+// Helper — load employee + slip + workspace settings. The slip renderer is
+// English-only for now; locale columns on portal_users / tenant_settings
+// are still in the schema but no longer read by this path.
+async function loadSlipBundle(pool, employeeId) {
   const slip = await calculateSlip(pool, Number(employeeId));
   const [empRows] = await pool.execute(
-    `SELECT e.id, e.name, e.role, e.department, e.emp_code,
-            pu.preferred_locale
+    `SELECT e.id, e.name, e.role, e.department, e.emp_code
      FROM employees e
-     LEFT JOIN portal_users pu ON pu.employee_id = e.id
      WHERE e.id = ? LIMIT 1`,
     [Number(employeeId)]
   );
   const employee = empRows[0] || null;
   const [setRows] = await pool.execute(
-    `SELECT currency, country_code, company_name, slip_title, default_locale
+    `SELECT currency, country_code, company_name, slip_title
      FROM tenant_settings WHERE singleton_key = 1 LIMIT 1`
   );
   const settings = setRows[0] || {};
-  const locale = employee?.preferred_locale
-              || settings.default_locale
-              || fallbackLocale
-              || 'en';
-  return { employee, slip, settings, locale };
+  return { employee, slip, settings };
 }
 
 // GET /api/employee/me/slip — logged-in employee fetches their own slip
@@ -135,7 +129,7 @@ router.get('/employee/me/slip.pdf', requireEmployee, async (req, res, next) => {
     if (!rows.length || !rows[0].employee_id) {
       return res.status(404).json({ error: 'No employee record linked to this portal account.' });
     }
-    const bundle = await loadSlipBundle(pool, rows[0].employee_id, req.locale);
+    const bundle = await loadSlipBundle(pool, rows[0].employee_id);
     const pdf = await generateSalarySlipPdf(bundle);
     res.set({
       'Content-Type':        'application/pdf',
@@ -151,7 +145,7 @@ router.get('/employee/me/slip.pdf', requireEmployee, async (req, res, next) => {
 router.get('/salary/slip/:employee_id.pdf', requireAdmin, async (req, res, next) => {
   try {
     const pool = await getDB();
-    const bundle = await loadSlipBundle(pool, req.params.employee_id, req.locale);
+    const bundle = await loadSlipBundle(pool, req.params.employee_id);
     const pdf = await generateSalarySlipPdf(bundle);
     res.set({
       'Content-Type':        'application/pdf',

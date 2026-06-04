@@ -1,6 +1,14 @@
 const fs = require('fs');
 const path = require('path');
-const { t, formatCurrency, formatDate, formatNumber } = require('./i18n');
+// Local English-only helpers (i18n module was removed). If/when we re-add
+// localization, these become call sites for a new t()/formatter layer.
+const formatCurrency = (n, currency) => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: currency || 'USD', maximumFractionDigits: 0,
+}).format(Number(n) || 0);
+const formatDate   = (date) => new Intl.DateTimeFormat('en-US', {
+  year: 'numeric', month: 'short', day: 'numeric',
+}).format(date instanceof Date ? date : new Date(date));
+const formatNumber = (n) => new Intl.NumberFormat('en-US').format(Number(n) || 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side PDF generation via Puppeteer.
@@ -95,18 +103,15 @@ const SALARY_SLIP_TEMPLATE = fs.readFileSync(
   'utf8'
 );
 
-// generateSalarySlipPdf({ employee, slip, settings, locale }) → Buffer
+// generateSalarySlipPdf({ employee, slip, settings }) → Buffer
 //
-// `locale` is the RECIPIENT'S preferred locale (employee.preferred_locale),
-// not the requester's. A Japanese employee's slip renders in Japanese with
-// Noto Sans JP whether the admin downloading it is in en or de.
-async function generateSalarySlipPdf({ employee, slip, settings, locale }) {
-  const L = locale || 'en';
+// English-only output for now. The CJK fonts (Noto Sans JP/SC/KR) are still
+// embedded in the HTML template so non-Latin employee names render
+// correctly; only the LABEL strings are English.
+async function generateSalarySlipPdf({ employee, slip, settings }) {
   const currency = settings?.currency || 'USD';
   const month = slip?.month || '';
-
-  const tt = (key, vars) => t(L, `pdf.salarySlip.${key}`, vars);
-  const money = (n) => formatCurrency(L, Number(n) || 0, currency);
+  const money = (n) => formatCurrency(Number(n) || 0, currency);
 
   // Compose earnings/deductions rows from the slip object.
   const earnings = (slip?.earnings || []).map(e => ({
@@ -119,29 +124,29 @@ async function generateSalarySlipPdf({ employee, slip, settings, locale }) {
   }));
 
   const html = render(SALARY_SLIP_TEMPLATE, {
-    LOCALE:           L,
+    LOCALE:           'en',
     BRAND_NAME:       settings?.company_name || settings?.brand_name || 'Tickin',
-    SLIP_TITLE:       settings?.slip_title || tt('title'),
-    LABEL_EMPLOYEE:   tt('employeeName'),
-    LABEL_DESIG:      tt('designation'),
-    LABEL_DEPT:       tt('department'),
-    LABEL_EMPCODE:    tt('empCode'),
-    LABEL_MONTH:      tt('month'),
-    LABEL_DAYS:       tt('daysWorked'),
-    LABEL_EARNINGS:   tt('earnings'),
-    LABEL_DEDUCTIONS: tt('deductions'),
-    LABEL_GROSS:      tt('grossSalary'),
-    LABEL_NET:        tt('netSalary'),
-    LABEL_TOTAL_DED:  tt('totalDeductions'),
-    LABEL_CONFIDENTIAL: tt('confidential'),
-    LABEL_GENERATED:  tt('generatedOn', { date: formatDate(L, new Date()) }),
+    SLIP_TITLE:       settings?.slip_title || 'Salary Slip',
+    LABEL_EMPLOYEE:   'Employee Name',
+    LABEL_DESIG:      'Designation',
+    LABEL_DEPT:       'Department',
+    LABEL_EMPCODE:    'Employee Code',
+    LABEL_MONTH:      'Month',
+    LABEL_DAYS:       'Days Worked',
+    LABEL_EARNINGS:   'Earnings',
+    LABEL_DEDUCTIONS: 'Deductions',
+    LABEL_GROSS:      'Gross Salary',
+    LABEL_NET:        'Net Salary',
+    LABEL_TOTAL_DED:  'Total Deductions',
+    LABEL_CONFIDENTIAL: 'Confidential',
+    LABEL_GENERATED:  `Generated on ${formatDate(new Date())}`,
 
     EMP_NAME:    employee?.name || '',
     EMP_DESIG:   employee?.role || '',
     EMP_DEPT:    employee?.department || '',
     EMP_CODE:    employee?.emp_code || '—',
     SLIP_MONTH:  month,
-    DAYS_WORKED: formatNumber(L, slip?.days_worked || 0),
+    DAYS_WORKED: formatNumber(slip?.days_worked || 0),
 
     GROSS:           money(slip?.gross_salary || 0),
     NET:             money(slip?.net_salary || 0),

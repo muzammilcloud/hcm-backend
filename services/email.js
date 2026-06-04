@@ -39,29 +39,25 @@ const transporter = new Proxy({}, {
   },
 });
 
-async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: providedUrl, companyName, locale }) {
+async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: providedUrl, companyName }) {
   const recipient = email || to;
   const baseUrl   = process.env.FRONTEND_URL || 'http://localhost:5173';
   const inviteUrl = providedUrl || `${baseUrl}/set-password?token=${inviteToken}`;
   email = recipient;
 
-  // i18n lookup. `locale` should be the recipient's preferred_locale where
-  // available; the t() helper falls back to en when a key is missing.
-  const { t } = require('./i18n');
-  const L = locale || 'en';
   const _company = companyName || 'Tickin';
 
-  const subject  = t(L, 'email.invite.subject', { companyName: _company });
-  const heading  = t(L, 'email.invite.heading', { companyName: _company });
-  const greeting = t(L, 'email.common.greeting', { name });
-  const lede     = t(L, 'email.invite.lede');
-  const cta      = t(L, 'email.invite.cta');
-  const expires  = t(L, 'email.invite.expiresNote');
-  const fallback = t(L, 'email.invite.fallback');
+  const subject  = `You're invited to join ${_company} on Tickin`;
+  const heading  = `Welcome to ${_company}`;
+  const greeting = `Hi ${name},`;
+  const lede     = "You've been invited to join the workspace on Tickin. Click below to set your password and sign in.";
+  const cta      = 'Set your password';
+  const expires  = 'This invite link expires in 7 days.';
+  const fallback = "If the button above doesn't work, copy and paste this link into your browser:";
 
   const html = `
     <!DOCTYPE html>
-    <html lang="${L}">
+    <html lang="en">
     <head><meta charset="UTF-8"></head>
     <body style="margin:0;padding:0;background:#020617;font-family:'Segoe UI','Noto Sans CJK JP','Noto Sans CJK SC','Noto Sans CJK KR',sans-serif;">
       <div style="max-width:520px;margin:40px auto;background:#0f172a;border-radius:16px;overflow:hidden;border:1px solid #1e293b;">
@@ -95,7 +91,7 @@ async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: provid
       subject,
       html,
     });
-    console.log(`✅ Invite email sent to ${email} (locale=${L})`);
+    console.log(`✅ Invite email sent to ${email}`);
     return true;
   } catch (e) {
     console.error(`❌ Email failed to ${email}:`, e.message);
