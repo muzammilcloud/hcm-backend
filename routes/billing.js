@@ -3,7 +3,7 @@ const router  = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { getPlatformDB } = require('../db');
 const { createCheckout, getCustomerPortalUrl, setAutoRenew, setAddon, changePlan, previewChange, isConfigured } = require('../services/billing');
-const { PRICE_IDS, ADDON_PRICE_IDS } = require('../lib/polarConstants');
+const { PRICE_IDS, ADDON_PRICE_IDS, addonPriceFor } = require('../lib/polarConstants');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tenant-scoped billing endpoints. All require sys-admin auth.
@@ -207,6 +207,9 @@ router.post('/billing/checkout-url', requireAdmin, async (req, res, next) => {
     for (const addon of addons) {
       if (!ADDON_PRICE_IDS[addon]) {
         return res.status(400).json({ error: `Unknown addon: ${addon}` });
+      }
+      if (!addonPriceFor(addon, cycle)) {
+        return res.status(400).json({ error: `No Polar price configured for addon ${addon}/${cycle}. Set the corresponding env var.` });
       }
     }
 

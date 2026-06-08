@@ -4,6 +4,9 @@ const {
   POLAR_ACCESS_TOKEN,
   PRICE_IDS,
   ADDON_PRICE_IDS,
+  addonPriceFor,
+  addonPriceIdsAll,
+  addonKeyFromPriceId,
   tierFromPriceId,
   isConfigured,
 } = require('../lib/polarConstants');
@@ -51,9 +54,10 @@ function extractPriceIds(sub) {
 }
 
 function subscriptionHasAddon(sub, addonKey) {
-  const target = ADDON_PRICE_IDS[addonKey];
-  if (!target) return false;
-  return extractPriceIds(sub).includes(target);
+  const targets = addonPriceIdsAll(addonKey); // both monthly + annual ids
+  if (!targets.length) return false;
+  const ids = extractPriceIds(sub);
+  return targets.some((t) => ids.includes(t));
 }
 
 // Resolve a tenant by id without going through tenant middleware. Used by
@@ -95,7 +99,9 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
 
   const products = [priceId];
   for (const addon of addons) {
-    const addonPriceId = ADDON_PRICE_IDS[addon];
+    // Match the add-on's billing cycle to the base so an annual plan + add-on
+    // is one consolidated yearly bill.
+    const addonPriceId = addonPriceFor(addon, cycle);
     if (addonPriceId) products.push(addonPriceId);
   }
 
@@ -525,8 +531,17 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
   for (const cycles of Object.values(PRICE_IDS)) {
     for (const id of Object.values(cycles)) if (id) allBasePriceIds.add(id);
   }
-  const kept = allCurrentPriceIds.filter(id => !allBasePriceIds.has(id));
-  const newPriceIds = [newBasePriceId, ...kept];
+  // Keep non-base lines (add-ons), but re-point each add-on to the product
+  // that matches the NEW base cycle — so switching monthly<->annual moves the
+  // Desktop add-on onto the same single invoice as the base.
+  const kept = allCurrentPriceIds
+    .filter(id => !allBasePriceIds.has(id))
+    .map(id => {
+      const addonKey = addonKeyFromPriceId(id);
+      return addonKey ? addonPriceFor(addonKey, cycle) : id;
+    })
+    .filter(Boolean);
+  const newPriceIds = [newBasePriceId, ...new Set(kept)];
 
   // For per-seat tiers, also push a quantity of at least PER_SEAT_MIN so
   // the customer doesn't briefly bill at quantity=1 between the plan
@@ -651,22 +666,26 @@ async function setAddon(tenant, addonKey, enabled) {
   if (!tenant?.polar_subscription_id) {
     throw new Error('No active subscription to attach the add-on to.');
   }
-  const addonPriceId = ADDON_PRICE_IDS[addonKey];
+  // Match the add-on cycle to the tenant's base billing cycle so it lands on
+  // the same invoice (annual base -> annual add-on = one yearly bill).
+  const cycle = tenant?.billing_cycle === 'annual' ? 'annual' : 'monthly';
+  const addonPriceId = addonPriceFor(addonKey, cycle);
   if (!addonPriceId) {
-    throw new Error(`Unknown add-on: ${addonKey}`);
+    throw new Error(`Unknown or unconfigured add-on: ${addonKey} (${cycle}).`);
   }
+  const allAddonIds = addonPriceIdsAll(addonKey); // strip any cycle when removing
 
   // Pull current sub from Polar, compute the desired final price list.
   const current = await polar.subscriptions.get({ id: tenant.polar_subscription_id });
   const currentPriceIds = extractPriceIds(current);
-  const hasIt = currentPriceIds.includes(addonPriceId);
+  const hasIt = allAddonIds.some(id => currentPriceIds.includes(id));
 
   if (enabled && hasIt)   return { addon: addonKey, enabled: true,  no_change: true };
   if (!enabled && !hasIt) return { addon: addonKey, enabled: false, no_change: true };
 
   const newPriceIds = enabled
-    ? [...currentPriceIds, addonPriceId]
-    : currentPriceIds.filter(id => id !== addonPriceId);
+    ? [...new Set([...currentPriceIds, addonPriceId])]
+    : currentPriceIds.filter(id => !allAddonIds.includes(id));
 
   await polar.subscriptions.update({
     id: tenant.polar_subscription_id,
