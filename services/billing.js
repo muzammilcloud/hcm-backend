@@ -550,7 +550,7 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
 // authoritative math at the moment of update; this is for the
 // "are you sure?" panel.
 function previewChange(tenant, { tier, cycle, addons = [], seats }) {
-  const TIER_MONTHLY = { starter: 19, growth: 3, business: 6 };
+  const TIER_MONTHLY = { starter: 2, growth: 3, business: 6 };
   const ADDON_MONTHLY = { desktop_standard: 3 };
   const ANNUAL_FACTOR = 0.8;
   const GROWTH_BUSINESS_MIN_SEATS = 1; // no seat minimum — bill actual team size
@@ -560,7 +560,7 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
   const currentSeats = Number(tenant?.seat_count) || Number(seats) || 1;
   const currentAddons = Array.isArray(tenant?.addons) ? tenant.addons : [];
 
-  const isPerSeat = (t) => t === 'growth' || t === 'business';
+  const isPerSeat = (t) => t === 'starter' || t === 'growth' || t === 'business';
   // Per-seat tiers (Growth, Business) have a 10-seat minimum. Bill the
   // greater of actual employees or the minimum so a 4-person team on
   // Growth still pays the floor of $30/mo, not $12/mo.
@@ -785,7 +785,7 @@ async function logBillingEvent({ tenantId, type, polarEventId, payload }) {
 // Per-seat tiers bill for the actual team size — no minimum seat floor.
 // (Previously enforced a 10-seat minimum; removed per product direction so a
 // small Growth team pays only for the seats it uses.)
-const PER_SEAT_TIERS = ['growth', 'business'];
+const PER_SEAT_TIERS = ['starter', 'growth', 'business'];
 const PER_SEAT_MIN   = 1;
 
 // enforceSeatMinimum(tenantId)
