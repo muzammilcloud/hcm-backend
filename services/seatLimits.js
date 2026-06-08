@@ -14,11 +14,11 @@ const { getDB, getPlatformDB } = require('../db');
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SOFT_LIMITS = {
-  starter:  10,
+  starter:  null, // unlimited — Starter has no employee/seat cap
   growth:   100,
   business: null, // unlimited
-  demo:     10,
-  trial:    10,
+  demo:     null, // trials evaluate at full scale
+  trial:    null,
   paid:     null, // legacy "paid" → treat as unlimited until migrated
 };
 

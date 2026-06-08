@@ -553,7 +553,7 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
   const TIER_MONTHLY = { starter: 19, growth: 3, business: 6 };
   const ADDON_MONTHLY = { desktop_standard: 3 };
   const ANNUAL_FACTOR = 0.8;
-  const GROWTH_BUSINESS_MIN_SEATS = 10;
+  const GROWTH_BUSINESS_MIN_SEATS = 1; // no seat minimum — bill actual team size
 
   const currentTier  = tenant?.plan || 'starter';
   const currentCycle = tenant?.billing_cycle || 'monthly';
@@ -782,10 +782,11 @@ async function logBillingEvent({ tenantId, type, polarEventId, payload }) {
   }
 }
 
-// Hard floor on per-seat tiers. Polar's UI doesn't expose a minimum-
-// quantity field on the price config, so we enforce it server-side.
+// Per-seat tiers bill for the actual team size — no minimum seat floor.
+// (Previously enforced a 10-seat minimum; removed per product direction so a
+// small Growth team pays only for the seats it uses.)
 const PER_SEAT_TIERS = ['growth', 'business'];
-const PER_SEAT_MIN   = 10;
+const PER_SEAT_MIN   = 1;
 
 // enforceSeatMinimum(tenantId)
 // Guards against Polar quantities below the floor for per-seat tiers.
