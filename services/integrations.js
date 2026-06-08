@@ -1,4 +1,4 @@
-const { getDB } = require('../db');
+const { getDB, getPlatformDB, tenantContext } = require('../db');
 const { encryptJson, decryptJson, mask } = require('./crypto');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,11 +48,34 @@ async function readRow(type) {
   }
 }
 
+// Resolve whether the current tenant (from async context) includes a feature.
+// Lets us stop a grandfathered config (e.g. a Starter tenant's old custom SMTP)
+// from being USED at runtime even though the row still exists. Fails OPEN on
+// any lookup error so email/Slack sends are never broken by a gate check.
+async function currentTenantHas(feature) {
+  try {
+    const ctx = tenantContext.getStore?.();
+    if (!ctx?.tenantId) return true; // platform/system path — don't restrict
+    const platform = getPlatformDB();
+    const [rows] = await platform.execute('SELECT plan FROM tenants WHERE id=? LIMIT 1', [ctx.tenantId]);
+    const { tenantHas } = require('./features');
+    return tenantHas(rows[0] || {}, feature);
+  } catch (_) {
+    return true;
+  }
+}
+
 // Used by services/slack.js and services/email.js at runtime
 async function getIntegrationConfig(type) {
   const row = await readRow(type);
   if (!row || !row.enabled || !row.config_encrypted) {
     return FALLBACKS[type] ? FALLBACKS[type]() : null;
+  }
+  // Custom SMTP is a Growth feature. A grandfathered Starter tenant may still
+  // have a saved+enabled SMTP row — ignore it and use the platform default so
+  // their plan grants no more than it advertises.
+  if (type === 'smtp' && !(await currentTenantHas('smtp_integration'))) {
+    return FALLBACKS.smtp();
   }
   const cfg = decryptJson(row.config_encrypted);
   if (!cfg) return FALLBACKS[type] ? FALLBACKS[type]() : null;

@@ -5,6 +5,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { sendInviteEmail } = require('../services/email');
 const { recordAudit } = require('../services/audit');
 const { sanitizePortalUser, sanitizePortalUsers } = require('../services/sanitize');
+const { tenantHas, minPlanFor } = require('../services/features');
 
 // Build the set-password URL for an invite, scoped to the current tenant.
 // Without this, sendInviteEmail falls back to process.env.FRONTEND_URL
@@ -91,6 +92,15 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
     });
   }
   const pRole = requestedRole;
+  // Team-lead assignment (two-stage approvals) is a Growth feature. Block
+  // Starter tenants from creating/inviting NEW team-leads; existing team-lead
+  // users are grandfathered (their stored role keeps working).
+  if (pRole === 'team-lead' && !tenantHas(req.tenant, 'team_lead_role')) {
+    return res.status(402).json({
+      error: 'Feature locked', code: 'FEATURE_LOCKED',
+      feature: 'team_lead_role', required_plan: minPlanFor('team_lead_role'),
+    });
+  }
   try {
     const pool = await getDB();
 

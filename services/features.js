@@ -26,9 +26,13 @@ const STARTER_FEATURES = new Set([
 ]);
 
 // Growth — everything Starter has plus the larger feature set.
+//
+// NOTE: the Desktop App is NOT a plan feature — it's a paid add-on available
+// on EVERY plan (including Starter). Desktop access is gated purely by the
+// `desktop_standard` add-on (tenants.addons), see routes/desktop.js. So
+// 'desktop_app' deliberately does NOT appear in any plan's feature set.
 const GROWTH_FEATURES = new Set([
   ...STARTER_FEATURES,
-  'desktop_app',                  // Desktop install + idle tracking
   'overtime_detection',           // Slack OT prompt + per-session decision
   'monthly_reconciliation',       // 1st-of-month 3-bucket OT snapshot
   'custom_tax_brackets',          // edit tax brackets (Starter is preset-only)
@@ -58,7 +62,6 @@ const FEATURE_MIN_PLAN = {
   weekly_reports:      'starter',
   email_support:       'starter',
   // Growth-tier features
-  desktop_app:                'growth',
   overtime_detection:         'growth',
   monthly_reconciliation:     'growth',
   custom_tax_brackets:        'growth',

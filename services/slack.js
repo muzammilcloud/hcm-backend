@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { getDB, getPlatformDB, tenantContext } = require('../db');
 const { getBusinessConfig } = require('../config/business');
 const { getIntegrationConfig } = require('./integrations');
+const { tenantHas } = require('./features');
 
 // Per-tenant Slack credentials with env fallback. Resolved against the
 // current tenant context (AsyncLocalStorage); when no tenant context,
@@ -248,7 +249,7 @@ async function checkOvertimePrompts() {
   try {
     const platform = getPlatformDB();
     const [rows] = await platform.execute(
-      `SELECT id, slug, db_name FROM tenants WHERE status = 'active'`
+      `SELECT id, slug, db_name, plan FROM tenants WHERE status = 'active'`
     );
     tenants = rows;
   } catch (e) {
@@ -257,6 +258,8 @@ async function checkOvertimePrompts() {
   }
 
   for (const t of tenants) {
+    // Overtime detection is a Growth feature — skip Starter tenants entirely.
+    if (!tenantHas(t, 'overtime_detection')) continue;
     try {
       await tenantContext.run(
         { dbName: t.db_name, slug: t.slug, tenantId: t.id },

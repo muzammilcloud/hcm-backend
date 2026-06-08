@@ -4,6 +4,7 @@ const { getDB, logEvent } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { postToSlack, getSlackUserIdByEmail, sendSlackDM } = require('../services/slack');
 const { getBusinessConfig } = require('../config/business');
+const { tenantHas } = require('../services/features');
 
 // POST /api/employee/clock-in
 router.post('/employee/clock-in', requireEmployee, async (req, res) => {
@@ -43,8 +44,11 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     const biz         = await getBusinessConfig(pool);
     const dailyHours  = biz.daily_hours;
     const dailyMs     = biz.daily_ms;
+    // Overtime detection is a Growth feature. Starter tenants get no OT prompt
+    // and accrue no overtime — they simply clock out at the worked time.
+    const otEnabled   = tenantHas(req.tenant, 'overtime_detection');
 
-    if (hoursWorked >= dailyHours && !entry.ot_decision) {
+    if (otEnabled && hoursWorked >= dailyHours && !entry.ot_decision) {
       const [puInfo] = await pool.execute('SELECT * FROM portal_users WHERE id=?', [req.portalUserId]);
       const pu = puInfo[0];
       let slackUserId = pu?.slack_user_id;
@@ -85,7 +89,7 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM portal_time_entries WHERE id=?', [entry.id]);
     const sessionHours = (new Date(rows[0].clock_out) - new Date(rows[0].clock_in)) / 3600000;
 
-    if (sessionHours > dailyHours) {
+    if (otEnabled && sessionHours > dailyHours) {
       const otHours = parseFloat((sessionHours - dailyHours).toFixed(2));
       if (otHours > 0) {
         await pool.execute(

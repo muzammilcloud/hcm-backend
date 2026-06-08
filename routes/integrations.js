@@ -9,8 +9,24 @@ const {
   recordTestResult,
 } = require('../services/integrations');
 const { recordAudit } = require('../services/audit');
+const { requireFeature } = require('../middleware/features');
+const { tenantHas, minPlanFor } = require('../services/features');
 
 const TYPES = new Set(['slack', 'smtp']);
+
+// Custom SMTP is a Growth feature. Block Starter tenants from saving, enabling,
+// or testing a custom SMTP config. Slack stays open on every plan, and DELETE
+// stays open so an admin can always remove a stale config (grandfathering).
+function gateSmtp(req, res) {
+  if (req.params.type === 'smtp' && !tenantHas(req.tenant, 'smtp_integration')) {
+    res.status(402).json({
+      error: 'Feature locked', code: 'FEATURE_LOCKED',
+      feature: 'smtp_integration', required_plan: minPlanFor('smtp_integration'),
+    });
+    return false;
+  }
+  return true;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/integrations — summary list for the admin UI
@@ -39,6 +55,7 @@ router.put('/integrations/:type', requireAdmin, async (req, res, next) => {
   try {
     const type = req.params.type;
     if (!TYPES.has(type)) return res.status(404).json({ error: 'Unknown integration' });
+    if (!gateSmtp(req, res)) return;
     const { config, enabled = true, merge = true } = req.body || {};
 
     let finalConfig = config || {};
@@ -79,6 +96,7 @@ router.put('/integrations/:type', requireAdmin, async (req, res, next) => {
 router.put('/integrations/:type/enabled', requireAdmin, async (req, res, next) => {
   try {
     if (!TYPES.has(req.params.type)) return res.status(404).json({ error: 'Unknown integration' });
+    if (!gateSmtp(req, res)) return;
     const enabled = !!req.body?.enabled;
     await setEnabled(req.params.type, enabled);
     recordAudit(req, {
@@ -125,7 +143,7 @@ router.post('/integrations/slack/test', requireAdmin, async (req, res, next) => 
 });
 
 // POST /api/integrations/smtp/test — verifies connection without sending
-router.post('/integrations/smtp/test', requireAdmin, async (req, res, next) => {
+router.post('/integrations/smtp/test', requireAdmin, requireFeature('smtp_integration'), async (req, res, next) => {
   const { host, port, user, password } = req.body || {};
   if (!host || !user || !password) return res.status(400).json({ error: 'host, user, password are required' });
   try {
