@@ -36,7 +36,15 @@ const baseConnConfig = () => ({
   user:     envStr('DB_USER', 'root'),
   password: process.env.DB_PASSWORD || '',
   waitForConnections: true,
-  connectionLimit: 10,
+  // connectionLimit is the per-pool ceiling under load. With one pool per
+  // tenant (LRU-cached), boot migrations would otherwise leave idle connections
+  // open on every pool — which, doubled during a blue-green deploy, exhausts
+  // MySQL's max_connections. maxIdle + idleTimeout reap idle connections back
+  // down so each container's steady-state footprint stays small. Tunable via env.
+  connectionLimit: Number(process.env.DB_POOL_SIZE) || 10,
+  maxIdle:         Number(process.env.DB_POOL_MAX_IDLE) || 2,
+  idleTimeout:     Number(process.env.DB_POOL_IDLE_MS) || 30000,
+  enableKeepAlive: true,
   dateStrings: ['DATE'],
 });
 
