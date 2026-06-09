@@ -188,13 +188,28 @@ router.get('/employee/time-entries', requireEmployee, async (req, res) => {
   const { from, to } = req.query;
   try {
     const pool = await getDB();
-    let query  = `SELECT *, ROUND(TIMESTAMPDIFF(SECOND, clock_in, COALESCE(clock_out, NOW()))/3600, 2) as hours FROM portal_time_entries WHERE portal_user_id=?`;
+    // Gross hours plus per-session break time, so History can show
+    // gross / break / net (mirrors the summary breakdown).
+    let query  = `SELECT pte.*,
+      ROUND(TIMESTAMPDIFF(SECOND, pte.clock_in, COALESCE(pte.clock_out, NOW()))/3600, 2) AS hours,
+      ROUND(COALESCE((
+        SELECT SUM(CASE WHEN pb.break_end IS NULL
+                          THEN TIMESTAMPDIFF(SECOND, pb.break_start, NOW())
+                        ELSE pb.duration_seconds END)
+        FROM portal_breaks pb WHERE pb.time_entry_id = pte.id
+      ), 0)/3600, 2) AS break_hours
+      FROM portal_time_entries pte WHERE pte.portal_user_id=?`;
     const params = [req.portalUserId];
-    if (from) { query += ' AND DATE(clock_in) >= ?'; params.push(from); }
-    if (to)   { query += ' AND DATE(clock_in) <= ?'; params.push(to); }
-    query += ' ORDER BY clock_in DESC';
+    if (from) { query += ' AND DATE(pte.clock_in) >= ?'; params.push(from); }
+    if (to)   { query += ' AND DATE(pte.clock_in) <= ?'; params.push(to); }
+    query += ' ORDER BY pte.clock_in DESC';
     const [rows] = await pool.execute(query, params);
-    res.json(rows);
+    const withNet = rows.map((r) => ({
+      ...r,
+      break_hours: r.break_hours || 0,
+      net_hours: Math.max(0, Number(((r.hours || 0) - (r.break_hours || 0)).toFixed(2))),
+    }));
+    res.json(withNet);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
