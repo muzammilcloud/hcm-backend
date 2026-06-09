@@ -35,6 +35,11 @@ const baseConnConfig = () => ({
   port:     Number(envStr('DB_PORT', '3306')),
   user:     envStr('DB_USER', 'root'),
   password: process.env.DB_PASSWORD || '',
+  // Full Unicode on the wire so Japanese (incl. rare kanji) and emoji entered in
+  // name / company / notes / any text field round-trip intact. Without this,
+  // mysql2 defaults to utf8mb3 (3-byte) and 4-byte characters get corrupted even
+  // though the tables are utf8mb4.
+  charset: 'utf8mb4',
   waitForConnections: true,
   // connectionLimit is the per-pool ceiling under load. With one pool per
   // tenant (LRU-cached), boot migrations would otherwise leave idle connections
