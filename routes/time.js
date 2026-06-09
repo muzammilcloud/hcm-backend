@@ -123,7 +123,63 @@ router.get('/employee/clock-status', requireEmployee, async (req, res) => {
     const [rows] = await pool.execute(
       'SELECT * FROM portal_time_entries WHERE portal_user_id=? AND clock_out IS NULL', [req.portalUserId]
     );
-    res.json({ clocked_in: rows.length > 0, entry: rows[0] || null });
+    const entry = rows[0] || null;
+    let onBreak = false, breakStart = null, breakSeconds = 0;
+    if (entry) {
+      const [openB] = await pool.execute(
+        'SELECT break_start FROM portal_breaks WHERE time_entry_id=? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1',
+        [entry.id]
+      );
+      onBreak    = openB.length > 0;
+      breakStart = onBreak ? openB[0].break_start : null;
+      // Total break time so far for this session (closed breaks + the running one).
+      const [sum] = await pool.execute(
+        `SELECT COALESCE(SUM(CASE WHEN break_end IS NULL
+                  THEN TIMESTAMPDIFF(SECOND, break_start, NOW())
+                  ELSE duration_seconds END), 0) AS total
+           FROM portal_breaks WHERE time_entry_id=?`,
+        [entry.id]
+      );
+      breakSeconds = Number(sum[0].total || 0);
+    }
+    res.json({ clocked_in: !!entry, entry, on_break: onBreak, break_started_at: breakStart, break_seconds: breakSeconds });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/employee/break/toggle — start a break if working, end it if on break.
+// Mirrors the Slack /break command so web users get the same break tracking.
+router.post('/employee/break/toggle', requireEmployee, async (req, res) => {
+  try {
+    const pool = await getDB();
+    const [active] = await pool.execute(
+      'SELECT id FROM portal_time_entries WHERE portal_user_id=? AND clock_out IS NULL', [req.portalUserId]
+    );
+    if (active.length === 0) return res.status(400).json({ error: 'You need to be clocked in to take a break.' });
+    const entryId = active[0].id;
+
+    const [openBreak] = await pool.execute(
+      'SELECT id, break_start FROM portal_breaks WHERE time_entry_id=? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1',
+      [entryId]
+    );
+
+    if (openBreak.length > 0) {
+      // End the break.
+      await pool.execute(
+        `UPDATE portal_breaks
+            SET break_end = NOW(), duration_seconds = TIMESTAMPDIFF(SECOND, break_start, NOW())
+          WHERE id = ?`,
+        [openBreak[0].id]
+      );
+      return res.json({ on_break: false });
+    }
+
+    // Start a break.
+    await pool.execute(
+      `INSERT INTO portal_breaks (portal_user_id, time_entry_id, break_start, source)
+       VALUES (?, ?, NOW(), 'web')`,
+      [req.portalUserId, entryId]
+    );
+    res.json({ on_break: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
