@@ -24,6 +24,17 @@ const {
 } = require('../services/tenant');
 const { requirePlatformAdmin } = require('../middleware/platformAuth');
 const { sendInviteEmail } = require('../services/email');
+const { planOf } = require('../services/features');
+
+// Decorate a tenant row for the admin UI with the resolved billing picture:
+//   is_trial      — still on a demo/trial (vs. a paying customer)
+//   effective_tier — the tier whose features actually apply right now
+//                    (trial → the tier they're evaluating; paid → their plan)
+function decorateTenant(t) {
+  if (!t) return t;
+  const raw = String(t.plan || '').toLowerCase();
+  return { ...t, is_trial: raw === 'demo' || raw === 'trial', effective_tier: planOf(t) };
+}
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
@@ -82,7 +93,7 @@ router.get('/platform/tenants', requirePlatformAdmin, async (req, res, next) => 
       limit:  Math.min(Number(limit)  || 50, 200),
       offset: Math.max(Number(offset) || 0, 0),
     });
-    res.json({ tenants });
+    res.json({ tenants: tenants.map(decorateTenant) });
   } catch (e) { next(e); }
 });
 
@@ -90,7 +101,7 @@ router.get('/platform/tenants/:id', requirePlatformAdmin, async (req, res, next)
   try {
     const tenant = await getTenantById(req.params.id);
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
-    res.json(tenant);
+    res.json(decorateTenant(tenant));
   } catch (e) { next(e); }
 });
 
@@ -147,9 +158,12 @@ router.post('/platform/tenants/:id/activate', requirePlatformAdmin, async (req, 
 router.post('/platform/tenants/:id/plan', requirePlatformAdmin, async (req, res, next) => {
   try {
     const { plan } = req.body || {};
-    if (!['demo', 'trial', 'paid'].includes(plan)) return res.status(400).json({ error: 'Invalid plan' });
-    await setTenantPlan(req.params.id, plan);
-    audit({ actorType: 'platform_admin', actorId: req.platformAdmin.id, tenantId: Number(req.params.id), action: 'tenant.plan.change', detail: { plan }, ip: req.ip });
+    // 'trial' dropped — it was a duplicate of 'demo'. Accept the legacy value
+    // for backward-compat but normalise it to 'demo'.
+    const normalized = plan === 'trial' ? 'demo' : plan;
+    if (!['demo', 'paid'].includes(normalized)) return res.status(400).json({ error: 'Invalid plan' });
+    await setTenantPlan(req.params.id, normalized);
+    audit({ actorType: 'platform_admin', actorId: req.platformAdmin.id, tenantId: Number(req.params.id), action: 'tenant.plan.change', detail: { plan: normalized }, ip: req.ip });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
