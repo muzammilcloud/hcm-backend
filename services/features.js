@@ -75,8 +75,18 @@ const FEATURE_MIN_PLAN = {
 
 // Resolve a tenant's effective plan key. Treats anything unknown as 'starter'
 // (most restrictive) to fail closed.
+//
+// During a self-serve trial (plan = demo/trial) we honour the tier the tenant
+// chose to evaluate (trial_tier = 'starter' | 'growth') so the demo reflects the
+// plan they intend to buy. If no choice was recorded, trials default to 'growth'
+// — the full evaluation experience, matching the long-standing behaviour.
 function planOf(tenant) {
   const raw = String(tenant?.plan || '').toLowerCase().trim();
+  if (raw === 'demo' || raw === 'trial') {
+    const tier = String(tenant?.trial_tier || '').toLowerCase().trim();
+    if (tier === 'starter' || tier === 'growth' || tier === 'business') return tier;
+    return 'growth';
+  }
   return FEATURES[raw] ? raw : 'starter';
 }
 

@@ -42,8 +42,11 @@ router.post('/signup', async (req, res, next) => {
   let signupId = null;
   try {
     const {
-      firstName, lastName, email, company, slug: requestedSlug, teamSize,
+      firstName, lastName, email, company, slug: requestedSlug, teamSize, plan: chosenPlan,
     } = req.body || {};
+    // Which tier the trial evaluates. Anything but 'starter' falls back to the
+    // full-feature Growth trial (the long-standing default).
+    const trialTier = String(chosenPlan).toLowerCase() === 'starter' ? 'starter' : 'growth';
 
     // Validate
     const errors = [];
@@ -85,6 +88,7 @@ router.post('/signup', async (req, res, next) => {
       contactEmail:  email.trim().toLowerCase(),
       adminName,
       plan:          'demo',
+      trialTier,
     });
 
     await platform.execute(

@@ -114,6 +114,10 @@ async function initPlatformDB() {
     "ADD COLUMN dunning_emails_sent   JSON NULL AFTER past_due_at",
     "ADD COLUMN current_period_end    DATETIME NULL AFTER dunning_emails_sent",
     "ADD COLUMN cancel_at_period_end  TINYINT(1) NOT NULL DEFAULT 0 AFTER current_period_end",
+    // Which tier a demo/trial tenant is evaluating. Lets a trial experience the
+    // Starter (restricted) or Growth (full) feature set before they ever pay,
+    // and is switchable during the trial. Only consulted while plan is demo/trial.
+    "ADD COLUMN trial_tier            ENUM('starter','growth') NULL AFTER plan",
   ];
   for (const clause of tenantBillingColumns) {
     try { await db.execute(`ALTER TABLE tenants ${clause}`); } catch (_) { /* already exists */ }

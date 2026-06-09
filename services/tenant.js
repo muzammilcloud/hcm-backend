@@ -143,6 +143,7 @@ async function provisionTenant({
   contactEmail,
   adminName,
   plan = 'demo',
+  trialTier = null,   // 'starter' | 'growth' — which tier this trial evaluates
 }) {
   if (!isValidSlug(slug))    throw Object.assign(new Error('Invalid subdomain'), { code: 'INVALID_SLUG' });
   if (isReservedSlug(slug))  throw Object.assign(new Error('That subdomain is reserved'), { code: 'RESERVED_SLUG' });
@@ -158,11 +159,16 @@ async function provisionTenant({
     ? new Date(Date.now() + DEMO_TRIAL_DAYS * 24 * 60 * 60 * 1000)
     : null;
 
+  // Only record a trial tier for trials; paid plans derive features from `plan`.
+  const normalizedTier = (plan === 'demo' || plan === 'trial')
+    ? (['starter', 'growth'].includes(String(trialTier)) ? trialTier : null)
+    : null;
+
   // 1. Insert tenants row in 'provisioning' state — reserves slug atomically
   const [ins] = await platform.execute(
-    `INSERT INTO tenants (slug, company_name, db_name, contact_email, status, plan, trial_ends_at)
-     VALUES (?, ?, ?, ?, 'provisioning', ?, ?)`,
-    [slug, companyName, dbName, contactEmail, plan, trialEnds]
+    `INSERT INTO tenants (slug, company_name, db_name, contact_email, status, plan, trial_tier, trial_ends_at)
+     VALUES (?, ?, ?, ?, 'provisioning', ?, ?, ?)`,
+    [slug, companyName, dbName, contactEmail, plan, normalizedTier, trialEnds]
   );
   const tenantId = ins.insertId;
 
@@ -298,6 +304,21 @@ async function setTenantPlan(tenantId, plan) {
   );
 }
 
+// Switch which tier a TRIAL is evaluating (Starter vs Growth). Only meaningful
+// while the tenant is on a demo/trial plan; ignored for paid tenants, whose
+// features come from `plan`. Returns true if a row was updated.
+async function setTrialTier(tenantId, tier) {
+  if (!['starter', 'growth'].includes(String(tier))) {
+    throw Object.assign(new Error('Invalid tier'), { code: 'INVALID_TIER' });
+  }
+  const db = getPlatformDB();
+  const [res] = await db.execute(
+    `UPDATE tenants SET trial_tier = ? WHERE id = ? AND plan IN ('demo','trial')`,
+    [tier, tenantId]
+  );
+  return res.affectedRows > 0;
+}
+
 // Audit log helper — written from any actor (platform admin, system cron, tenant)
 async function audit({ actorType, actorId, tenantId, action, detail, ip }) {
   try {
@@ -322,7 +343,7 @@ module.exports = {
   getTenantBySlug, getTenantById, listTenants,
 
   // mutations
-  provisionTenant, suspendTenant, activateTenant, deleteTenant, setTenantPlan,
+  provisionTenant, suspendTenant, activateTenant, deleteTenant, setTenantPlan, setTrialTier,
 
   // audit
   audit,
