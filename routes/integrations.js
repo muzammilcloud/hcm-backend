@@ -12,7 +12,7 @@ const { recordAudit } = require('../services/audit');
 const { requireFeature } = require('../middleware/features');
 const { tenantHas, minPlanFor } = require('../services/features');
 
-const TYPES = new Set(['slack', 'smtp']);
+const TYPES = new Set(['slack', 'smtp', 'lineworks']);
 
 // Custom SMTP is a Growth feature. Block Starter tenants from saving, enabling,
 // or testing a custom SMTP config. Slack stays open on every plan, and DELETE
@@ -118,6 +118,31 @@ router.delete('/integrations/:type', requireAdmin, async (req, res, next) => {
     });
     res.json({ ok: true });
   } catch (e) { next(e); }
+});
+
+// POST /api/integrations/lineworks/test — verify the bot can authenticate.
+// Open on every plan, like Slack. Pulls saved secrets when masked fields are sent.
+router.post('/integrations/lineworks/test', requireAdmin, async (req, res) => {
+  try {
+    const lw = require('../services/lineworks');
+    const { getIntegrationConfig } = require('../services/integrations');
+    let cfg = req.body || {};
+    // If the private key / secrets came through masked (•••), fall back to saved.
+    const saved = await getIntegrationConfig('lineworks');
+    for (const f of ['client_secret', 'private_key', 'bot_secret']) {
+      if (!cfg[f] || /^•+/.test(String(cfg[f]))) cfg[f] = saved?.[f];
+    }
+    if (!cfg.client_id || !cfg.service_account || !cfg.private_key || !cfg.client_secret) {
+      return res.status(400).json({ ok: false, error: 'client_id, service_account, client_secret and private_key are required' });
+    }
+    await lw.testConnection(cfg, Math.floor(Date.now() / 1000));
+    await recordTestResult('lineworks', true, 'Authenticated with LINE WORKS');
+    res.json({ ok: true, message: 'Connected to LINE WORKS' });
+  } catch (e) {
+    const msg = e.response?.data?.error_description || e.response?.data?.error || e.message;
+    await recordTestResult('lineworks', false, msg);
+    res.status(400).json({ ok: false, error: msg });
+  }
 });
 
 // POST /api/integrations/slack/test — { bot_token } → calls auth.test

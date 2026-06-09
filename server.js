@@ -24,6 +24,7 @@ const leavesRoutes    = require('./routes/leaves');
 const shiftsRoutes    = require('./routes/shifts');
 const reportsRoutes   = require('./routes/reports');
 const slackRoutes     = require('./routes/slack');
+const lineworksRoutes = require('./routes/lineworks');
 const otRoutes          = require('./routes/ot');
 // const resignationRoutes = require('./routes/resignation');  // disabled — uncomment to re-enable
 const birthdayRoutes    = require('./routes/birthdays');
@@ -77,7 +78,9 @@ app.use(cors({
 // (and re-stringify) the bytes the HMAC was computed over.
 app.use('/webhooks', polarWebhookRoutes);
 
-app.use(express.json());
+// Capture the raw body so webhook signatures (e.g. LINE WORKS X-WORKS-Signature)
+// can be verified against the exact bytes received.
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // Slack — parse slash command bodies
 app.use('/api/slack', express.urlencoded({ extended: true }));
@@ -111,6 +114,7 @@ app.use('/api', leavesRoutes);
 app.use('/api', shiftsRoutes);
 app.use('/api', reportsRoutes);
 app.use('/api/slack', slackRoutes);
+app.use('/api', lineworksRoutes);   // /api/lineworks/callback/:slug — self-resolves tenant
 app.use('/api', otRoutes);
 // app.use('/api', resignationRoutes);  // disabled — uncomment to re-enable
 app.use('/api', birthdayRoutes);

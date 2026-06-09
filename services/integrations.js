@@ -33,6 +33,7 @@ const FALLBACKS = {
 const SECRET_FIELDS = {
   slack: ['bot_token', 'signing_secret', 'webhook_url', 'leave_report_webhook_url'],
   smtp:  ['password'],
+  lineworks: ['bot_secret', 'client_secret', 'private_key'],
 };
 
 async function readRow(type) {
@@ -154,6 +155,9 @@ function maskedSummary(type, cfg) {
   }
   if (type === 'smtp') {
     return `${cfg.host}${cfg.port ? ':' + cfg.port : ''}${cfg.from_email ? ' · ' + cfg.from_email : ''}`;
+  }
+  if (type === 'lineworks') {
+    return cfg.bot_id ? `Bot ${cfg.bot_id}${cfg.channel_id ? ' · channel set' : ''}` : 'Configured';
   }
   return 'Configured';
 }
