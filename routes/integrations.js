@@ -28,6 +28,16 @@ function gateSmtp(req, res) {
   return true;
 }
 
+// Slack and LINE WORKS are the two chat integrations and are mutually exclusive:
+// a workspace runs one OR the other, never both. Enabling one disables the other.
+const CHAT_INTEGRATIONS = ['slack', 'lineworks'];
+async function disableOtherChatIntegrations(type) {
+  if (!CHAT_INTEGRATIONS.includes(type)) return;
+  for (const other of CHAT_INTEGRATIONS) {
+    if (other !== type) await setEnabled(other, false);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/integrations — summary list for the admin UI
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +91,7 @@ router.put('/integrations/:type', requireAdmin, async (req, res, next) => {
     }
 
     await saveIntegrationConfig(type, { config: finalConfig, enabled });
+    if (enabled) await disableOtherChatIntegrations(type);
     // Audit without secret values — just record which fields changed and the
     // enabled state. Full secret diff would be a credential leak.
     recordAudit(req, {
@@ -99,6 +110,7 @@ router.put('/integrations/:type/enabled', requireAdmin, async (req, res, next) =
     if (!gateSmtp(req, res)) return;
     const enabled = !!req.body?.enabled;
     await setEnabled(req.params.type, enabled);
+    if (enabled) await disableOtherChatIntegrations(req.params.type);
     recordAudit(req, {
       action: `integration.${req.params.type}.${enabled ? 'enabled' : 'disabled'}`,
       target: { type: 'integration', id: req.params.type },
