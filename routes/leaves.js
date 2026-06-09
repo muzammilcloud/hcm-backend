@@ -157,6 +157,74 @@ router.delete('/employees/:id/quota-override/:leaveType', requireAdmin, async (r
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/leave-quotas?year= — per-employee leave balances for ALL active staff.
+// Mirrors the team-lead /team/leave-quotas shape but spans the whole org so a
+// sys admin can see every employee's quota / used / remaining at a glance and
+// export it. Dual IDs handled explicitly: leave_requests key off portal_users.id,
+// quota overrides off employees.id.
+router.get('/leave-quotas', requireAdmin, async (req, res) => {
+  try {
+    const pool = await getDB();
+    const year = req.query.year || new Date().getFullYear();
+
+    const [members] = await pool.execute(
+      `SELECT pu.id AS portal_user_id, pu.name, pu.department, e.id AS employee_db_id, e.emp_code
+       FROM portal_users pu
+       JOIN employees e ON pu.employee_id = e.id
+       WHERE pu.status = 'active'
+       ORDER BY pu.name`
+    );
+
+    const [policies] = await pool.execute('SELECT * FROM leave_policies');
+    const quotaTypes = policies.filter(
+      p => p.leave_type !== 'Public Holiday' && p.leave_type !== 'Unpaid Leave'
+    );
+
+    const result = await Promise.all(members.map(async (m) => {
+      const [used] = await pool.execute(
+        `SELECT leave_type,
+                SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date, start_date) + 1 ELSE 0.5 END) AS days_used
+         FROM leave_requests
+         WHERE employee_id = ? AND status = 'approved' AND YEAR(start_date) = ?
+         GROUP BY leave_type`,
+        [m.portal_user_id, year]
+      );
+      const usedMap = Object.fromEntries(used.map(r => [r.leave_type, parseFloat(r.days_used)]));
+
+      let overrideMap = {};
+      if (m.employee_db_id) {
+        const [overrides] = await pool.execute(
+          `SELECT leave_type, quota FROM employee_quota_overrides WHERE employee_id = ?`,
+          [m.employee_db_id]
+        );
+        overrideMap = Object.fromEntries(overrides.map(r => [r.leave_type, r.quota]));
+      }
+
+      const quotas = quotaTypes.map(p => {
+        const quota     = p.is_unlimited ? null : (overrideMap[p.leave_type] ?? p.annual_quota);
+        const used_days = usedMap[p.leave_type] || 0;
+        return {
+          leave_type:   p.leave_type,
+          is_unlimited: !!p.is_unlimited,
+          quota,
+          used_days,
+          remaining:    p.is_unlimited ? null : Math.max(0, (quota || 0) - used_days),
+        };
+      });
+
+      return {
+        portal_user_id: m.portal_user_id,
+        name:           m.name,
+        department:     m.department,
+        emp_code:       m.emp_code,
+        quotas,
+      };
+    }));
+
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/public-holidays (public)
 router.get('/public-holidays', async (req, res) => {
   try {
