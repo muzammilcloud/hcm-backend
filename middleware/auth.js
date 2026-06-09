@@ -1,8 +1,16 @@
 const { getDB } = require('../db');
 
+// These middlewares authenticate against TENANT tables (portal_users / sessions).
+// If there's no tenant context (e.g. a request that landed on a platform
+// subdomain like admin.tickin.pro), getDB() would fall back to the platform DB
+// and the query would fail with a raw "Table 'tickin_platform.portal_users'
+// doesn't exist" error. Guard against that and return a clean 401 instead.
+function hasTenant(req) { return !!req.tenant; }
+
 async function requireAdmin(req, res, next) {
   const token = req.headers['authorization']?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!hasTenant(req)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const pool = await getDB();
 
@@ -47,6 +55,7 @@ async function requireAdmin(req, res, next) {
 async function requireEmployee(req, res, next) {
   const token = req.headers['authorization']?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!hasTenant(req)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const pool = await getDB();
     const [rows] = await pool.execute(
@@ -63,6 +72,7 @@ async function requireEmployee(req, res, next) {
 async function requireTeamLead(req, res, next) {
   const token = req.headers['authorization']?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!hasTenant(req)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const pool = await getDB();
     const [rows] = await pool.execute(
