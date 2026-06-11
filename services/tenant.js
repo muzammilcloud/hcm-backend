@@ -76,7 +76,15 @@ function isReservedSlug(slug) {
 async function isSlugAvailable(slug) {
   if (!isValidSlug(slug) || isReservedSlug(slug)) return false;
   const db = getPlatformDB();
-  const [rows] = await db.execute('SELECT id FROM tenants WHERE slug = ? LIMIT 1', [slug]);
+  // Deleted tenants (trial ended, never converted, data purged) release their
+  // subdomain: only a live (non-deleted) row holds a slug. The canonical
+  // slug/db_name are vacated on delete (see deleteTenant), but we filter on
+  // deleted_at too so any legacy deleted row that still holds the slug doesn't
+  // block it — provisionTenant vacates such rows just before INSERT.
+  const [rows] = await db.execute(
+    'SELECT id FROM tenants WHERE slug = ? AND deleted_at IS NULL LIMIT 1',
+    [slug]
+  );
   return rows.length === 0;
 }
 
@@ -121,7 +129,7 @@ async function listTenants({ status, plan, limit = 100, offset = 0 } = {}) {
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const sql = `
     SELECT id, slug, company_name, db_name, contact_email, status, plan,
-           trial_ends_at, suspended_at, deleted_at, created_at, updated_at
+           trial_ends_at, suspended_at, deleted_at, created_at, updated_at, metadata
     FROM tenants
     ${whereSql}
     ORDER BY created_at DESC
@@ -163,6 +171,23 @@ async function provisionTenant({
   const normalizedTier = (plan === 'demo' || plan === 'trial')
     ? (['starter', 'growth'].includes(String(trialTier)) ? trialTier : null)
     : null;
+
+  // 0. Vacate any DELETED tenant still holding this slug/db_name. Deleted rows
+  //    are kept for the audit trail, but their data is gone — so the subdomain
+  //    is free to reclaim. slug/db_name are UNIQUE, so the stale row must be
+  //    moved aside (originals preserved in metadata) or the INSERT below would
+  //    hit the constraint. Going forward deleteTenant vacates eagerly; this
+  //    also covers rows deleted before that behavior existed.
+  await platform.execute(
+    `UPDATE tenants
+        SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()),
+                                '$.released_slug', slug,
+                                '$.released_db_name', db_name),
+            slug    = CONCAT(LEFT(slug, 50), '~d', id),
+            db_name = CONCAT(LEFT(db_name, 50), '~d', id)
+      WHERE (slug = ? OR db_name = ?) AND deleted_at IS NOT NULL`,
+    [slug, dbName]
+  );
 
   // 1. Insert tenants row in 'provisioning' state — reserves slug atomically
   const [ins] = await platform.execute(
@@ -276,6 +301,13 @@ async function activateTenant(tenantId) {
 
 // Hard delete: drops the tenant's DB and marks the row deleted.
 // This is the action that runs after a demo's grace period expires.
+//
+// The row is kept (soft-deleted) for the audit trail, but the subdomain is
+// released: a deleted tenant no longer owns its slug, so it becomes available
+// for a fresh signup. Because slug + db_name are UNIQUE, we can't just leave
+// them on the dead row — we move the canonical values aside (the originals are
+// preserved in metadata.released_slug / released_db_name, and the admin panel
+// still shows the original name for the deleted record).
 async function deleteTenant(tenantId) {
   const db = getPlatformDB();
   const tenant = await getTenantById(tenantId);
@@ -287,8 +319,20 @@ async function deleteTenant(tenantId) {
   } catch (e) {
     console.error(`[deleteTenant] failed to drop ${tenant.db_name}:`, e.message);
   }
+  // Mark deleted AND vacate slug/db_name so the subdomain frees up. metadata is
+  // set first so it captures the originals before slug/db_name are reassigned
+  // (MySQL evaluates SET assignments left to right). The "~d<id>" suffix is
+  // guaranteed unique by the row id, satisfying the UNIQUE constraints.
   await db.execute(
-    `UPDATE tenants SET status = 'deleted', deleted_at = NOW() WHERE id = ?`,
+    `UPDATE tenants
+        SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()),
+                                '$.released_slug', slug,
+                                '$.released_db_name', db_name,
+                                '$.released_at', CAST(NOW() AS CHAR)),
+            status = 'deleted', deleted_at = NOW(),
+            slug    = CONCAT(LEFT(slug, 50), '~d', id),
+            db_name = CONCAT(LEFT(db_name, 50), '~d', id)
+      WHERE id = ?`,
     [tenantId]
   );
   return true;

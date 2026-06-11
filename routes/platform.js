@@ -33,7 +33,19 @@ const { planOf } = require('../services/features');
 function decorateTenant(t) {
   if (!t) return t;
   const raw = String(t.plan || '').toLowerCase();
-  return { ...t, is_trial: raw === 'demo' || raw === 'trial', effective_tier: planOf(t) };
+  // A deleted tenant's slug/db_name are vacated so the subdomain frees up
+  // (see services/tenant.deleteTenant); the originals live in metadata. Show
+  // those originals in the admin so the deleted record still reads cleanly
+  // (e.g. "sudo-consultants", not "sudo-consultants~d42").
+  const meta = t.metadata || {};
+  const slug    = meta.released_slug    || t.slug;
+  const db_name = meta.released_db_name || t.db_name;
+  return {
+    ...t, slug, db_name,
+    slug_released: !!meta.released_slug,
+    is_trial: raw === 'demo' || raw === 'trial',
+    effective_tier: planOf(t),
+  };
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
