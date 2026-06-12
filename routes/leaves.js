@@ -5,6 +5,7 @@ const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { sendLeaveRequestEmail, sendLeaveStatusEmail } = require('../services/email');
 const { notify, getTeamLeadOf } = require('../services/notifications');
 const { postToSlack } = require('../services/slack');
+const { tenantHas } = require('../services/features');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -556,13 +557,18 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
     //   - Employee with a TL → pending_tl
     //   - Employee without a TL → pending (direct to admin)
     //   - TL / sys-admin submitting their own → pending (skip TL stage, go to admin)
+    // The two-stage (TL → Admin) flow only applies when the plan actually
+    // includes the team-lead role. On Starter the team-lead role can't be
+    // assigned, so requests must go straight to the admin — otherwise they'd
+    // sit in pending_tl forever with no team lead to action them.
     const [reportsRow] = await pool.execute(
       `SELECT e.reports_to, pu.portal_role
        FROM portal_users pu LEFT JOIN employees e ON pu.employee_id = e.id
        WHERE pu.id = ?`,
       [req.employeeId]
     );
-    const hasTeamLead    = reportsRow[0]?.reports_to != null;
+    const planHasTeamLead = tenantHas(req.tenant, 'team_lead_role');
+    const hasTeamLead    = planHasTeamLead && reportsRow[0]?.reports_to != null;
     const submitterRole  = reportsRow[0]?.portal_role || 'employee';
     const submitterIsTL  = submitterRole === 'team-lead' || submitterRole === 'sys-admin';
     const initialStatus  = (hasTeamLead && !submitterIsTL) ? 'pending_tl' : 'pending';
