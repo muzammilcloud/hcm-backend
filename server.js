@@ -113,7 +113,7 @@ app.use('/api', salaryRoutes);
 app.use('/api', leavesRoutes);
 app.use('/api', shiftsRoutes);
 app.use('/api', reportsRoutes);
-app.use('/api/slack', slackRoutes);
+app.use('/api/slack/:slug', slackRoutes);   // /api/slack/<slug>/<command> — self-resolves tenant from the slug
 app.use('/api', lineworksRoutes);   // /api/lineworks/callback/:slug — self-resolves tenant
 app.use('/api', otRoutes);
 // app.use('/api', resignationRoutes);  // disabled — uncomment to re-enable

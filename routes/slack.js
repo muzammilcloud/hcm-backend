@@ -1,14 +1,36 @@
 const express = require('express');
 const axios   = require('axios');
-const router  = express.Router();
-const { getDB, logEvent } = require('../db');
+const router  = express.Router({ mergeParams: true });
+const { getDB, logEvent, tenantContext } = require('../db');
 const { getBusinessConfig } = require('../config/business');
+const { getTenantBySlug } = require('../services/tenant');
 const {
   getEmployeeBySlackId,
   postToSlack,
   fmtTimeInZone,
   getSlackUserTz,
 } = require('../services/slack');
+
+// Slack slash commands all hit a shared host (api.tickin.pro) with no tenant
+// subdomain, so the tenant is carried in the URL: /api/slack/<slug>/<command>
+// (mirrors the LINE WORKS webhook). Resolve it here and run the handler inside
+// the tenant context, so getDB() and the per-tenant Slack credentials resolve.
+// Without this, requests fall back to the empty platform Slack config and fail
+// with "SLACK_BOT_TOKEN not configured".
+router.use(async (req, res, next) => {
+  let tenant;
+  try { tenant = await getTenantBySlug(req.params.slug); } catch (_) {}
+  if (!tenant || tenant.status === 'deleted') {
+    if (req.body && req.body.response_url) {
+      axios.post(req.body.response_url, {
+        response_type: 'ephemeral',
+        text: `Tickin workspace "${req.params.slug || ''}" wasn't found. Check the Request URL in your Slack app — it should be https://api.tickin.pro/api/slack/<your-workspace>/<command>.`,
+      }).catch(() => {});
+    }
+    return res.status(200).end();
+  }
+  tenantContext.run({ dbName: tenant.db_name, slug: tenant.slug, tenantId: tenant.id }, next);
+});
 
 // POST /clockin — triggered by /clockin in Slack
 router.post('/clockin', async (req, res) => {
@@ -175,6 +197,7 @@ router.post('/break', async (req, res) => {
          VALUES (?, ?, NOW(), 'slack')`,
         [emp.id, entryId]
       );
+      await postToSlack(`☕ *${emp.name}* (${emp.department}) started a break. Work timer paused.`);
       return reply(`☕ Break started. Your work timer is paused. Type */break* again when you're back.`);
     }
 
@@ -195,6 +218,7 @@ router.post('/break', async (req, res) => {
     const mins    = Math.floor(elapsed / 60);
     const secs    = elapsed % 60;
     const dur     = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    await postToSlack(`✅ *${emp.name}* (${emp.department}) ended their break after *${dur}*. Work timer resumed.`);
     return reply(`✅ Break ended after *${dur}*. Work timer resumed.`);
 
   } catch (e) {

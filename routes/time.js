@@ -161,6 +161,8 @@ router.post('/employee/break/toggle', requireEmployee, async (req, res) => {
       'SELECT id, break_start FROM portal_breaks WHERE time_entry_id=? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1',
       [entryId]
     );
+    const [puRows] = await pool.execute('SELECT name, department FROM portal_users WHERE id=?', [req.portalUserId]);
+    const pu = puRows[0];
 
     if (openBreak.length > 0) {
       // End the break.
@@ -170,6 +172,13 @@ router.post('/employee/break/toggle', requireEmployee, async (req, res) => {
           WHERE id = ?`,
         [openBreak[0].id]
       );
+      // Announce in the attendance channel (same as clock-in/out).
+      if (pu) {
+        const secs = Math.max(0, Math.floor((Date.now() - new Date(openBreak[0].break_start).getTime()) / 1000));
+        const m = Math.floor(secs / 60), s = secs % 60;
+        const dur = m > 0 ? `${m}m ${s}s` : `${s}s`;
+        await postToSlack(`✅ *${pu.name}* (${pu.department}) ended their break after *${dur}*. Work timer resumed.`);
+      }
       return res.json({ on_break: false });
     }
 
@@ -179,6 +188,7 @@ router.post('/employee/break/toggle', requireEmployee, async (req, res) => {
        VALUES (?, ?, NOW(), 'web')`,
       [req.portalUserId, entryId]
     );
+    if (pu) await postToSlack(`☕ *${pu.name}* (${pu.department}) started a break. Work timer paused.`);
     res.json({ on_break: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

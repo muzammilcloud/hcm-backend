@@ -9,6 +9,7 @@ const PLATFORM_PREFIXES = [
   '/api/slug-check', // public slug availability lookup
   '/api/tenant',     // tenant lookup (whoami for FE)
   '/api/lineworks',  // LINE WORKS webhook — resolves its own tenant from the URL slug
+  '/api/slack',      // Slack slash commands — resolve their own tenant from the /api/slack/<slug>/… URL
   // Google OAuth redirect-flow endpoints. The callback comes from Google
   // with Referer=accounts.google.com (not a tenant subdomain), so the
   // default Referer-based slug resolution would 404 here. /start and
