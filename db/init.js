@@ -219,7 +219,7 @@ async function initTenantSchema(poolArg) {
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS tenant_integrations (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      integration_type ENUM('slack','smtp') NOT NULL UNIQUE,
+      integration_type ENUM('slack','smtp','lineworks') NOT NULL UNIQUE,
       enabled TINYINT(1) NOT NULL DEFAULT 1,
       config_encrypted MEDIUMTEXT,
       last_tested_at DATETIME NULL,
@@ -229,6 +229,12 @@ async function initTenantSchema(poolArg) {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB
   `);
+  // 'lineworks' was added as a chat integration after launch. Existing tenant
+  // DBs were created with ENUM('slack','smtp') only, so any write touching the
+  // lineworks row — e.g. enabling Slack calls disableOtherChatIntegrations()
+  // which disables LINE WORKS — failed with "Data truncated for column
+  // 'integration_type'" (a 500 on the Enable toggle). Widen the enum.
+  try { await pool.execute(`ALTER TABLE tenant_integrations MODIFY COLUMN integration_type ENUM('slack','smtp','lineworks') NOT NULL`); } catch (_) {}
 
   // ── Salary components ─────────────────────────────────────────────────────
   // Per-tenant library of earning/deduction lines used by the calculator.
