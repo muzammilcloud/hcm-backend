@@ -312,8 +312,23 @@ async function applyWebhookEvent(event) {
 async function onSubscriptionUpserted(tenantId, sub) {
   if (!tenantId || !sub) return;
   const platform = getPlatformDB();
-  const priceId = sub.priceId || sub.price?.id || sub.product?.id || extractPriceIds(sub)[0];
-  const tierInfo = priceId ? tierFromPriceId(priceId) : null;
+  // Resolve the tier/cycle from whatever id the subscription exposes. Our env
+  // PRICE_IDS hold PRODUCT ids, so the subscription's product id is the primary
+  // match; fall back to any other price/product id present. Works for both SDK
+  // camelCase and raw REST snake_case shapes.
+  const idCandidates = [
+    sub.product?.id, sub.product_id, sub.priceId, sub.price?.id,
+    ...extractPriceIds(sub),
+  ].filter(Boolean);
+  let tierInfo = null;
+  for (const cand of idCandidates) {
+    tierInfo = tierFromPriceId(cand);
+    if (tierInfo) break;
+  }
+  if (!tierInfo) {
+    console.warn('[billing] onSubscriptionUpserted: could not map subscription to a tier.',
+      JSON.stringify({ tenantId, idCandidates }));
+  }
   const billing_cycle = tierInfo?.cycle || null;
   const plan = tierInfo?.tier || null;
 
