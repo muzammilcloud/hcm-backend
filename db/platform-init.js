@@ -118,6 +118,11 @@ async function initPlatformDB() {
     // Starter (restricted) or Growth (full) feature set before they ever pay,
     // and is switchable during the trial. Only consulted while plan is demo/trial.
     "ADD COLUMN trial_tier            ENUM('starter','growth') NULL AFTER plan",
+    // Persistent once-per-day guard for the daily Leave & WFH report. Stores the
+    // tenant-local date the report last went out so restarts / multiple app
+    // instances can't re-send it within the day (the old in-memory guard reset
+    // on every restart, causing repeated sends).
+    "ADD COLUMN daily_report_last_sent DATE NULL AFTER cancel_at_period_end",
   ];
   for (const clause of tenantBillingColumns) {
     try { await db.execute(`ALTER TABLE tenants ${clause}`); } catch (_) { /* already exists */ }

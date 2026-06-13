@@ -70,13 +70,55 @@ function monthlyRequiredHours(config, year, month) {
   return config.daily_hours * workingDaysInMonth(year, month, config.working_days);
 }
 
+// Representative IANA timezone per country (ISO-3166 alpha-2). Used to resolve a
+// tenant's local "today"/noon for scheduling + date validation — close enough
+// for day-granularity decisions; falls back to Asia/Karachi (the product's
+// original default) for anything not listed.
+const COUNTRY_TZ = {
+  PK: 'Asia/Karachi',   IN: 'Asia/Kolkata',     BD: 'Asia/Dhaka',      LK: 'Asia/Colombo',
+  AE: 'Asia/Dubai',     SA: 'Asia/Riyadh',      QA: 'Asia/Qatar',      KW: 'Asia/Kuwait',
+  OM: 'Asia/Muscat',    BH: 'Asia/Bahrain',     JO: 'Asia/Amman',      EG: 'Africa/Cairo',
+  TR: 'Europe/Istanbul',GB: 'Europe/London',    IE: 'Europe/Dublin',   DE: 'Europe/Berlin',
+  FR: 'Europe/Paris',   ES: 'Europe/Madrid',    IT: 'Europe/Rome',     NL: 'Europe/Amsterdam',
+  SE: 'Europe/Stockholm',PL: 'Europe/Warsaw',   US: 'America/New_York', CA: 'America/Toronto',
+  MX: 'America/Mexico_City', BR: 'America/Sao_Paulo', AR: 'America/Argentina/Buenos_Aires',
+  AU: 'Australia/Sydney',NZ: 'Pacific/Auckland', SG: 'Asia/Singapore',  MY: 'Asia/Kuala_Lumpur',
+  ID: 'Asia/Jakarta',   PH: 'Asia/Manila',      TH: 'Asia/Bangkok',    VN: 'Asia/Ho_Chi_Minh',
+  JP: 'Asia/Tokyo',     KR: 'Asia/Seoul',       CN: 'Asia/Shanghai',   HK: 'Asia/Hong_Kong',
+  ZA: 'Africa/Johannesburg', NG: 'Africa/Lagos', KE: 'Africa/Nairobi',
+};
+const DEFAULT_TZ = 'Asia/Karachi';
+
+// Resolve a tenant's timezone from its country_code (tenant_settings).
+async function getTenantTimezone(pool) {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT country_code FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
+    );
+    const code = rows[0]?.country_code;
+    return (code && COUNTRY_TZ[code]) || DEFAULT_TZ;
+  } catch (_) {
+    return DEFAULT_TZ;
+  }
+}
+
+// Tenant-local calendar date as 'YYYY-MM-DD'.
+async function getTenantToday(pool) {
+  const tz = await getTenantTimezone(pool);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+}
+
 module.exports = {
   OT_THRESHOLD_HOURS,
   OT_THRESHOLD_MS,
   MONTHLY_TARGET_HOURS,
   DEFAULT_WORKING_DAYS,
   DAY_KEYS,
+  COUNTRY_TZ,
+  DEFAULT_TZ,
   getBusinessConfig,
+  getTenantTimezone,
+  getTenantToday,
   parseWorkingDays,
   workingDaysInMonth,
   monthlyRequiredHours,

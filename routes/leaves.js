@@ -6,6 +6,7 @@ const { sendLeaveRequestEmail, sendLeaveStatusEmail } = require('../services/ema
 const { notify, getTeamLeadOf } = require('../services/notifications');
 const { postToSlack } = require('../services/slack');
 const { tenantHas } = require('../services/features');
+const { getTenantToday } = require('../config/business');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -501,6 +502,17 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
 
     if (!eligibleTypes.has(leave_type)) {
       return res.status(403).json({ error: `You are not eligible for ${leave_type} based on your current employment status or profile.` });
+    }
+
+    // Sick Leave is reported as it happens — it can only be applied for a PAST
+    // date or TODAY, never a future date. (Past ranges ending today are fine;
+    // a same-day request is just today.) Dates are 'YYYY-MM-DD', so a lexical
+    // compare against the tenant-local date is correct.
+    if (leave_type === 'Sick Leave') {
+      const today = await getTenantToday(pool);
+      if ((start_date && start_date > today) || (end_date && end_date > today)) {
+        return res.status(400).json({ error: 'Sick Leave can only be applied for today or a past date — future sick leave is not allowed.' });
+      }
     }
 
     const joinDateStr = emp.join_date ? emp.join_date.toString().slice(0, 10) : null;

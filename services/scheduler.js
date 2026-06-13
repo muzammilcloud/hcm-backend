@@ -3,6 +3,7 @@ const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBir
 const { postLeaveReportToSlack } = require('./slack');
 const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./otReconciliation');
 const { tenantHas } = require('./features');
+const { getBusinessConfig, getTenantTimezone } = require('../config/business');
 
 // Read wall-clock hour/minute in a given IANA timezone (server may run in any tz).
 function nowIn(tz) {
@@ -278,6 +279,62 @@ async function sendDailyLeaveReport() {
   }
 }
 
+// Per-tenant gate for the daily Leave & WFH report. Sends EXACTLY once per day,
+// at noon in the tenant's local timezone, only on the tenant's configured
+// working days, and never on a public holiday. The once-per-day guard is
+// DB-backed (tenants.daily_report_last_sent) so app restarts or multiple
+// instances can't re-send within the day.
+async function maybeSendDailyLeaveReport(tenant) {
+  const pool = await getDB();
+
+  // Resolve the tenant's timezone from its country.
+  const tz = await getTenantTimezone(pool);
+
+  // Only fire at noon, local time. The scheduler ticks every 30 min, so the
+  // 12:00–12:59 window has exactly one local-hour===12 moment we act on (the
+  // DB guard de-dupes the two ticks inside that hour).
+  const { hour } = nowIn(tz);
+  if (hour !== 12) return;
+
+  // Tenant-local calendar date (YYYY-MM-DD) and weekday (sun/mon/…).
+  const todayLocal = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' })
+    .format(new Date()).toLowerCase().slice(0, 3); // 'mon','tue',…
+
+  // Working day? working_days is a Set of DAY_KEYS ('mon','tue',…).
+  const { working_days } = await getBusinessConfig(pool);
+  if (!working_days.has(weekday)) return;
+
+  // Skip public holidays (per-tenant public_holidays table).
+  try {
+    const [hol] = await pool.execute(
+      'SELECT 1 FROM public_holidays WHERE date = ? LIMIT 1', [todayLocal]
+    );
+    if (hol.length) return;
+  } catch (_) { /* if the lookup fails, don't block the report */ }
+
+  // Atomic, persistent once-per-day guard. The UPDATE only succeeds (affectedRows
+  // === 1) the first time today — concurrent instances racing the same tenant
+  // will see affectedRows === 0 and skip. Survives restarts (unlike the old
+  // in-memory map that reset on every boot and caused repeated sends).
+  const platform = getPlatformDB();
+  let won = false;
+  try {
+    const [res] = await platform.execute(
+      `UPDATE tenants SET daily_report_last_sent = ?
+       WHERE id = ? AND (daily_report_last_sent IS NULL OR daily_report_last_sent <> ?)`,
+      [todayLocal, tenant.id, todayLocal]
+    );
+    won = res.affectedRows === 1;
+  } catch (e) {
+    console.error('[daily-leave-report] guard update failed:', e.message);
+    return; // don't risk a spam loop if the guard can't be written
+  }
+  if (!won) return; // already sent today
+
+  await sendDailyLeaveReport();
+}
+
 // Scheduled report jobs
 // Run a function once per active tenant, inside that tenant's
 // AsyncLocalStorage context so getDB() targets its DB pool.
@@ -346,10 +403,12 @@ function scheduleReports() {
     if (hour === 8 && min < 30) {
       await forEachActiveTenant('birthdays', () => checkBirthdays());
     }
-    const pkt = nowIn('Asia/Karachi');
-    if (pkt.hour >= 12 && pkt.hour < 24 && !firedToday('dailyLeaveReport', 'Asia/Karachi')) {
-      await forEachActiveTenant('daily-leave-report', () => sendDailyLeaveReport());
-    }
+    // Daily Leave & WFH report — evaluated per tenant: fires once at NOON in the
+    // tenant's local timezone, only on the tenant's working days, and never on a
+    // public holiday. A persistent (DB-backed) once-per-day guard inside
+    // maybeSendDailyLeaveReport replaces the old in-memory check so restarts /
+    // multiple instances can't re-send it.
+    await forEachActiveTenant('daily-leave-report', (tenant) => maybeSendDailyLeaveReport(tenant));
 
     // Platform-level — runs against the platform DB directly, NOT
     // wrapped in tenant context. Reads tenants table, drops expired DBs.
