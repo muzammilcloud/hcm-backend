@@ -124,7 +124,27 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
     checkoutBody.customerSeats = PER_SEAT_MIN;
   }
 
-  const checkout = await polar.checkouts.create(checkoutBody);
+  let checkout;
+  try {
+    checkout = await polar.checkouts.create(checkoutBody);
+  } catch (e) {
+    // Surface the real cause instead of a generic "Response validation failed".
+    // The most common production failure is a configured product/price that was
+    // archived in the Polar dashboard — checkout then can't be created and the
+    // customer is blocked from subscribing. Log which products were tried so the
+    // env var (POLAR_<TIER>_<CYCLE>_PRICE_ID) can be repointed to an active one.
+    const detail = JSON.stringify(e?.body ?? e?.detail ?? e?.message ?? e);
+    if (/archived/i.test(detail)) {
+      console.error('[billing] Polar checkout blocked — a configured product is ARCHIVED.',
+        JSON.stringify({ tier, cycle, productsTried: products, polar: detail }));
+      throw Object.assign(
+        new Error(`Polar checkout product is archived. Un-archive it in Polar, or point POLAR_${tier.toUpperCase()}_${cycle.toUpperCase()}_PRICE_ID at an active product. Tried: ${products.join(', ')}`),
+        { code: 'POLAR_PRODUCT_ARCHIVED' }
+      );
+    }
+    console.error('[billing] Polar checkout failed:', detail);
+    throw e;
+  }
 
   return { url: checkout.url, id: checkout.id };
 }
