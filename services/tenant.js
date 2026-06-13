@@ -143,7 +143,13 @@ async function listTenants({ status, plan, limit = 100, offset = 0 } = {}) {
 // Provisioning
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEMO_TRIAL_DAYS = Number(process.env.DEMO_TRIAL_DAYS) || 14;
+// Free-trial length. Advertised as 14 days everywhere (pricing page, signup,
+// guide), so 14 is the source of truth. The legacy DEMO_TRIAL_DAYS knob is
+// intentionally ignored: production inherited DEMO_TRIAL_DAYS=7 from
+// .env.example, which silently gave new customers a 7-day trial that
+// contradicted the advertised 14. A demo/test override is still possible via
+// the new TRIAL_DAYS var (unset in production → 14).
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 14;
 
 async function provisionTenant({
   slug,
@@ -164,7 +170,7 @@ async function provisionTenant({
   const dbName  = tenantDbName(slug);
   const platform = getPlatformDB();
   const trialEnds = plan === 'demo'
-    ? new Date(Date.now() + DEMO_TRIAL_DAYS * 24 * 60 * 60 * 1000)
+    ? new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000)
     : null;
 
   // Only record a trial tier for trials; paid plans derive features from `plan`.
