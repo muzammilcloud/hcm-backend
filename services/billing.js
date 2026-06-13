@@ -654,6 +654,21 @@ async function reconcileSubscription(tenant) {
     return { reconciled: false, reason: 'No active subscription found in Polar for this tenant.' };
   }
 
+  // Ensure we have the Polar customer id — it's required for the customer portal
+  // and the subscription-list payload doesn't always carry it. Prefer the sub's
+  // own field, then the stored id, then a lookup by contact email. Stamp it onto
+  // the sub so onSubscriptionUpserted persists polar_customer_id.
+  let customerId = sub.customer_id || sub.customerId || sub.customer?.id
+    || tenant.polar_customer_id || null;
+  if (!customerId && tenant.contact_email) {
+    try {
+      const cust = await polarApi('GET',
+        `/v1/customers?email=${encodeURIComponent(tenant.contact_email)}&limit=1`);
+      customerId = cust.items?.[0]?.id || null;
+    } catch (_) {}
+  }
+  if (customerId) sub.customer_id = customerId;
+
   // 2) Apply via the exact path the webhook uses (idempotent upsert).
   await onSubscriptionUpserted(tenant.id, sub);
   return {
@@ -661,6 +676,7 @@ async function reconcileSubscription(tenant) {
     subscription_id: sub.id || null,
     status: sub.status || null,
     product_id: sub.product?.id || sub.product_id || null,
+    customer_id: customerId || null,
   };
 }
 
