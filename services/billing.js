@@ -189,16 +189,14 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
 // customer portal. Null if billing isn't configured or the tenant doesn't
 // have a Polar customer yet (first checkout hasn't happened).
 async function getCustomerPortalUrl(tenant) {
+  // null = genuinely no Polar customer on file (caller shows "start a plan").
   if (!isConfigured() || !tenant?.polar_customer_id) return null;
-  try {
-    const session = await polarApi('POST', '/v1/customer-sessions', {
-      customer_id: tenant.polar_customer_id,
-    });
-    return session.customer_portal_url;
-  } catch (e) {
-    console.error('[billing] customer portal session failed:', e.message);
-    return null;
-  }
+  // Let session-creation errors propagate so the route can surface the real
+  // cause instead of a misleading "no customer" message.
+  const session = await polarApi('POST', '/v1/customer-sessions', {
+    customer_id: tenant.polar_customer_id,
+  });
+  return session.customer_portal_url || session.customerPortalUrl || null;
 }
 
 async function getSubscription(tenant) {

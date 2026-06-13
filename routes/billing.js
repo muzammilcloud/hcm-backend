@@ -244,12 +244,25 @@ router.get('/billing/portal-url', requireAdmin, async (req, res, next) => {
     }
     const tenant = await loadTenant(req);
     if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
-    const url = await getCustomerPortalUrl(tenant);
-    if (!url) {
+    if (!tenant.polar_customer_id) {
       return res.status(404).json({
         error: 'No active subscription yet. Start a plan first.',
         code:  'NO_POLAR_CUSTOMER',
+        has_customer_id: false,
       });
+    }
+    let url;
+    try {
+      url = await getCustomerPortalUrl(tenant);
+    } catch (e) {
+      return res.status(502).json({
+        error: 'Could not open the customer portal — Polar session creation failed.',
+        code:  'PORTAL_SESSION_FAILED',
+        detail: e?.body ?? e?.message ?? String(e),
+      });
+    }
+    if (!url) {
+      return res.status(502).json({ error: 'Polar returned no portal URL.', code: 'PORTAL_NO_URL' });
     }
     res.json({ url });
   } catch (e) { next(e); }
