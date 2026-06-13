@@ -144,26 +144,19 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const PORT = process.env.PORT || 4000;
+// Run migrations to completion BEFORE listening. Serving while the per-tenant
+// migrations + backfills run concurrently can OOM the memory-capped container
+// (NODE_OPTIONS=--max-old-space-size=256) and crash-loop it. The healthcheck
+// start-period in the Dockerfile is widened to give the migrations time so this
+// doesn't fail the deploy.
 initPlatformDB()
+  .then(() => migrateAllTenants())
   .then(() => {
-    // Start listening as soon as the platform DB is ready so the container
-    // healthcheck (/health) passes promptly. The per-tenant schema migrations +
-    // backfills are slow once there are many tenants and previously blocked
-    // app.listen() long enough to fail the healthcheck and abort the whole
-    // deploy. They're idempotent and additive (on redeploy the schema already
-    // exists), so run them in the background and start the schedulers once
-    // they finish.
+    scheduleReports();
+    startOTChecker();
     app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
-
-    migrateAllTenants()
-      .then(() => {
-        scheduleReports();
-        startOTChecker();
-        console.log('✅ Tenant migrations complete; schedulers started');
-      })
-      .catch(err => console.error('❌ Tenant migrations failed (server still serving):', err.message));
   })
   .catch(err => {
-    console.error('❌ Failed to initialize platform DB:', err.message);
+    console.error('❌ Failed to initialize:', err.message);
     process.exit(1);
   });

@@ -43,7 +43,10 @@ ENV NODE_OPTIONS=--max-old-space-size=256
 
 EXPOSE 4001
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
+# start-period is generous: the app runs per-tenant migrations + backfills
+# before it starts listening, so /health is unavailable until those finish.
+# Health-check failures during start-period don't count against the container.
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 --start-period=240s \
   CMD wget --spider -q http://localhost:4001/health || exit 1
 
 # tini as PID 1 — ensures SIGTERM during deploys actually terminates Node.
