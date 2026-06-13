@@ -121,10 +121,12 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
   if (tenant.contact_email) restBody.customer_email = tenant.contact_email;
   if (successUrl)           restBody.success_url    = successUrl;
 
-  // For per-seat tiers (Growth, Business), open checkout at the seat floor so the
-  // customer sees the real minimum bill. The webhook seat-minimum net enforces it
-  // regardless.
-  if (PER_SEAT_TIERS.includes(tier)) restBody.seats = PER_SEAT_MIN;
+  // NOTE: do not set `seats` here. Polar rejects it on fixed-price products
+  // ("Seats can only be set for seat-based pricing", HTTP 422) — the configured
+  // Starter product is fixed-price while Growth/Business are seat_based. Seat-
+  // based checkouts already default to 1 seat (== PER_SEAT_MIN), and the webhook
+  // seat-minimum net enforces the real team size after purchase, so an explicit
+  // floor here adds nothing and would break fixed-price checkouts.
 
   const apiHost = POLAR_ENV === 'production' ? 'https://api.polar.sh' : 'https://sandbox-api.polar.sh';
   let checkout;
