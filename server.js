@@ -145,11 +145,23 @@ process.on('unhandledRejection', (reason) => {
 
 const PORT = process.env.PORT || 4000;
 initPlatformDB()
-  .then(() => migrateAllTenants())
   .then(() => {
-    scheduleReports();
-    startOTChecker();
+    // Start listening as soon as the platform DB is ready so the container
+    // healthcheck (/health) passes promptly. The per-tenant schema migrations +
+    // backfills are slow once there are many tenants and previously blocked
+    // app.listen() long enough to fail the healthcheck and abort the whole
+    // deploy. They're idempotent and additive (on redeploy the schema already
+    // exists), so run them in the background and start the schedulers once
+    // they finish.
     app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
+
+    migrateAllTenants()
+      .then(() => {
+        scheduleReports();
+        startOTChecker();
+        console.log('✅ Tenant migrations complete; schedulers started');
+      })
+      .catch(err => console.error('❌ Tenant migrations failed (server still serving):', err.message));
   })
   .catch(err => {
     console.error('❌ Failed to initialize platform DB:', err.message);
