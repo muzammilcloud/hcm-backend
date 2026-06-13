@@ -430,6 +430,17 @@ function scheduleReports() {
     if (hour % 6 === 0 && min < 30 && !firedToday(`dunning-${hour}`, 'UTC')) {
       await runDunning();
     }
+
+    // Billing safety net — every 6 hours, re-sync paying tenants from Polar so
+    // cancellations / plan changes / payment status stay accurate even if a
+    // webhook is missed. (Real-time sync is the webhook; trials reconcile lazily
+    // when their admin opens the billing page.) Platform-level — not per tenant.
+    if (hour % 6 === 0 && min < 30 && !firedToday(`billing-reconcile-${hour}`, 'UTC')) {
+      try {
+        const { reconcileActiveSubscriptions } = require('./billing');
+        await reconcileActiveSubscriptions();
+      } catch (e) { console.error('[scheduler] billing reconcile failed:', e.message); }
+    }
   }, 30 * 60 * 1000);
 }
 

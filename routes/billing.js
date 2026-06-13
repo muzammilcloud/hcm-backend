@@ -36,8 +36,22 @@ async function loadTenant(req) {
 
 router.get('/billing/state', requireAdmin, async (req, res, next) => {
   try {
-    const tenant = await loadTenant(req);
+    let tenant = await loadTenant(req);
     if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
+
+    // Auto-sync from Polar (no manual button needed): if billing is configured
+    // and the tenant still looks like an unconverted trial but might actually
+    // have subscribed (the case a missed/late webhook leaves stale), reconcile
+    // once and reload. Best-effort + skipped entirely once a subscription is on
+    // file, so it adds no latency to the normal paid-tenant path.
+    if (isConfigured()
+        && !tenant.polar_subscription_id
+        && ['demo', 'trial'].includes(String(tenant.plan || '').toLowerCase())) {
+      try {
+        const r = await reconcileSubscription(tenant);
+        if (r?.reconciled) { const fresh = await loadTenant(req); if (fresh) tenant = fresh; }
+      } catch (_) { /* never let a Polar hiccup break the billing page */ }
+    }
 
     // Live seat count from the tenant DB, in case the platform-side
     // seat_count column hasn't been updated yet.

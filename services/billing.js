@@ -712,6 +712,29 @@ async function reconcileSubscription(tenant) {
   };
 }
 
+// Background safety net: periodically re-sync every tenant that already has a
+// Polar customer/subscription, so cancellations / plan changes / payment-status
+// changes stay reflected even if a webhook delivery is missed. Scales with the
+// number of PAYING tenants, not all tenants (trials are reconciled lazily on
+// billing-page load instead). Called from the scheduler.
+async function reconcileActiveSubscriptions() {
+  if (!isConfigured()) return { checked: 0, reconciled: 0 };
+  const platform = getPlatformDB();
+  const [tenants] = await platform.execute(
+    `SELECT id, slug, contact_email, polar_customer_id, polar_subscription_id, plan
+       FROM tenants
+      WHERE status = 'active'
+        AND (polar_customer_id IS NOT NULL OR polar_subscription_id IS NOT NULL)`
+  );
+  let reconciled = 0;
+  for (const t of tenants) {
+    try { const r = await reconcileSubscription(t); if (r?.reconciled) reconciled++; }
+    catch (e) { console.error('[billing] periodic reconcile failed:', t.slug, e.message); }
+  }
+  if (tenants.length) console.log(`[billing] periodic reconcile: ${reconciled}/${tenants.length} tenant(s) synced`);
+  return { checked: tenants.length, reconciled };
+}
+
 // Locally compute a prorated preview for a plan change OR add-on toggle.
 // Doesn't hit Polar — uses the cached subscription state from our DB
 // plus the desired new shape to estimate the delta. Polar does the
@@ -1057,6 +1080,7 @@ module.exports = {
   setAddon,
   changePlan,
   reconcileSubscription,
+  reconcileActiveSubscriptions,
   previewChange,
   subscriptionHasAddon,
   isConfigured,
