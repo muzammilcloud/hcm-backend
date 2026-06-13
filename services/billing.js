@@ -53,6 +53,14 @@ function extractPriceIds(sub) {
   return [...out].filter(Boolean);
 }
 
+// Read a subscription field that may arrive in SDK camelCase (validateEvent
+// mapped the event) OR raw snake_case (webhook raw-JSON fallback for seat-based
+// events the pinned SDK can't map). Prefer camelCase, fall back to snake_case.
+function subField(sub, camel, snake) {
+  if (sub == null) return undefined;
+  return sub[camel] !== undefined ? sub[camel] : sub[snake];
+}
+
 function subscriptionHasAddon(sub, addonKey) {
   const targets = addonPriceIdsAll(addonKey); // both monthly + annual ids
   if (!targets.length) return false;
@@ -86,13 +94,33 @@ function getPolar() {
   return _polar;
 }
 
+// Direct Polar REST calls. We bypass the SDK for subscription reads + mutations
+// because the pinned SDK (0.34) does strict response validation that throws on
+// seat_based pricing fields (the same bug that broke checkout). REST returns
+// plain JSON we parse ourselves. Field names follow the CURRENT Polar API:
+//   change plan  → PATCH /v1/subscriptions/{id} { product_id }
+//   change seats → PATCH /v1/subscriptions/{id} { seats }
+//   auto-renew   → PATCH /v1/subscriptions/{id} { cancel_at_period_end }
+// (The old SDK shapes — productPriceIds / quantity / cancelAtPeriodEnd — are
+// obsolete and rejected by the live API.)
+const polarApiHost = () => (POLAR_ENV === 'production' ? 'https://api.polar.sh' : 'https://sandbox-api.polar.sh');
+async function polarApi(method, path, body) {
+  const resp = await fetch(polarApiHost() + path, {
+    method,
+    headers: { Authorization: `Bearer ${POLAR_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw Object.assign(new Error(`Polar ${method} ${path} → HTTP ${resp.status}`), { body: data, status: resp.status });
+  return data;
+}
+
 // Create a Polar checkout session for the given tenant. Returns the checkout
 // URL the FE redirects the user to. The session carries our internal
 // tenant_id + tenant_slug as metadata so the webhook can link the resulting
 // subscription back without ambiguity.
 async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], successUrl }) {
-  const polar = getPolar();
-  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!isConfigured()) throw new Error('Billing is not configured on this server.');
 
   const priceId = PRICE_IDS[tier]?.[cycle];
   if (!priceId) throw new Error(`No Polar price configured for ${tier} / ${cycle}. Set the POLAR_${tier.toUpperCase()}_${cycle.toUpperCase()}_PRICE_ID env var.`);
@@ -161,13 +189,12 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
 // customer portal. Null if billing isn't configured or the tenant doesn't
 // have a Polar customer yet (first checkout hasn't happened).
 async function getCustomerPortalUrl(tenant) {
-  const polar = getPolar();
-  if (!polar || !tenant?.polar_customer_id) return null;
+  if (!isConfigured() || !tenant?.polar_customer_id) return null;
   try {
-    const session = await polar.customerSessions.create({
-      customerId: tenant.polar_customer_id,
+    const session = await polarApi('POST', '/v1/customer-sessions', {
+      customer_id: tenant.polar_customer_id,
     });
-    return session.customerPortalUrl;
+    return session.customer_portal_url;
   } catch (e) {
     console.error('[billing] customer portal session failed:', e.message);
     return null;
@@ -175,10 +202,9 @@ async function getCustomerPortalUrl(tenant) {
 }
 
 async function getSubscription(tenant) {
-  const polar = getPolar();
-  if (!polar || !tenant?.polar_subscription_id) return null;
+  if (!isConfigured() || !tenant?.polar_subscription_id) return null;
   try {
-    return await polar.subscriptions.get({ id: tenant.polar_subscription_id });
+    return await polarApi('GET', `/v1/subscriptions/${tenant.polar_subscription_id}`);
   } catch (e) {
     console.error('[billing] subscription fetch failed:', e.message);
     return null;
@@ -286,16 +312,17 @@ async function applyWebhookEvent(event) {
 async function onSubscriptionUpserted(tenantId, sub) {
   if (!tenantId || !sub) return;
   const platform = getPlatformDB();
-  const priceId = sub.priceId || sub.price?.id || sub.product?.id;
+  const priceId = sub.priceId || sub.price?.id || sub.product?.id || extractPriceIds(sub)[0];
   const tierInfo = priceId ? tierFromPriceId(priceId) : null;
   const billing_cycle = tierInfo?.cycle || null;
   const plan = tierInfo?.tier || null;
 
   // current_period_end + cancel_at_period_end mirrored so the FE can render
-  // "cancels on X" / "renews on X" without a Polar API round-trip.
-  const currentPeriodEnd = sub.currentPeriodEnd
-    ? new Date(sub.currentPeriodEnd) : null;
-  const cancelAtPeriodEnd = sub.cancelAtPeriodEnd ? 1 : 0;
+  // "cancels on X" / "renews on X" without a Polar API round-trip. Read both
+  // SDK camelCase and raw snake_case (see subField / webhook raw-JSON fallback).
+  const cpe = subField(sub, 'currentPeriodEnd', 'current_period_end');
+  const currentPeriodEnd = cpe ? new Date(cpe) : null;
+  const cancelAtPeriodEnd = subField(sub, 'cancelAtPeriodEnd', 'cancel_at_period_end') ? 1 : 0;
 
   // When a subscription returns to active, clear any past-due bookkeeping
   // so future dunning runs don't re-fire on stale state.
@@ -315,7 +342,7 @@ async function onSubscriptionUpserted(tenantId, sub) {
          status                = CASE WHEN ? IN ('active','trialing') THEN 'active' ELSE status END
      WHERE id = ?`,
     [
-      sub.customerId || null,
+      subField(sub, 'customerId', 'customer_id') || null,
       sub.id || null,
       sub.status || 'unknown',
       plan,
@@ -389,7 +416,8 @@ async function onSubscriptionUpserted(tenantId, sub) {
 async function onSubscriptionCanceledAtPeriodEnd(tenantId, sub) {
   if (!tenantId) return;
   const platform = getPlatformDB();
-  const periodEnd = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null;
+  const cpe = subField(sub, 'currentPeriodEnd', 'current_period_end');
+  const periodEnd = cpe ? new Date(cpe) : null;
   await platform.execute(
     `UPDATE tenants
      SET polar_status         = ?,
@@ -455,7 +483,7 @@ async function onSubscriptionPastDue(tenantId, sub) {
     if (t && !already.includes(0)) {
       const { sendDunningEmail } = require('./email');
       const portalUrl = await getCustomerPortalUrl({
-        polar_customer_id: sub?.customerId || sub?.customer?.id,
+        polar_customer_id: subField(sub, 'customerId', 'customer_id') || sub?.customer?.id,
       });
       const sent = await sendDunningEmail({
         to: t.contact_email,
@@ -532,8 +560,7 @@ async function sendPaymentFailedSlackDM(tenantId, tenantRow) {
 // Keeps existing add-ons attached. Polar prorates the difference between
 // the old and new product for the remainder of the current period.
 async function changePlan(tenant, { tier, cycle = 'monthly' }) {
-  const polar = getPolar();
-  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!isConfigured()) throw new Error('Billing is not configured on this server.');
   if (!tenant?.polar_subscription_id) {
     throw new Error('No active subscription to change.');
   }
@@ -543,46 +570,20 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
   if (!['monthly', 'annual'].includes(cycle)) {
     throw new Error('cycle must be monthly | annual.');
   }
-  const newBasePriceId = PRICE_IDS[tier]?.[cycle];
-  if (!newBasePriceId) {
-    throw new Error(`Polar price not configured for ${tier}/${cycle}.`);
+  const newProductId = PRICE_IDS[tier]?.[cycle];
+  if (!newProductId) {
+    throw new Error(`Polar product not configured for ${tier}/${cycle}.`);
   }
 
-  // Pull current subscription, replace the BASE plan price while keeping
-  // any add-on lines (desktop_standard, etc.) intact.
-  const current = await polar.subscriptions.get({ id: tenant.polar_subscription_id });
-  const allCurrentPriceIds = extractPriceIds(current);
-
-  // Identify which current price IDs are base-plan products (Starter or
-  // Growth, monthly or annual). Drop those; keep everything else (add-ons).
-  const allBasePriceIds = new Set();
-  for (const cycles of Object.values(PRICE_IDS)) {
-    for (const id of Object.values(cycles)) if (id) allBasePriceIds.add(id);
-  }
-  // Keep non-base lines (add-ons), but re-point each add-on to the product
-  // that matches the NEW base cycle — so switching monthly<->annual moves the
-  // Desktop add-on onto the same single invoice as the base.
-  const kept = allCurrentPriceIds
-    .filter(id => !allBasePriceIds.has(id))
-    .map(id => {
-      const addonKey = addonKeyFromPriceId(id);
-      return addonKey ? addonPriceFor(addonKey, cycle) : id;
-    })
-    .filter(Boolean);
-  const newPriceIds = [newBasePriceId, ...new Set(kept)];
-
-  // For per-seat tiers, also push a quantity of at least PER_SEAT_MIN so
-  // the customer doesn't briefly bill at quantity=1 between the plan
-  // switch and the webhook-driven enforceSeatMinimum re-clamp.
-  const updateBody = {
-    id: tenant.polar_subscription_id,
-    productPriceIds: newPriceIds,
-  };
-  if (PER_SEAT_TIERS.includes(tier)) {
-    const currentSeats = Number(tenant.seat_count) || 0;
-    updateBody.quantity = Math.max(currentSeats, PER_SEAT_MIN);
-  }
-  await polar.subscriptions.update(updateBody);
+  // Current Polar API: switch the subscription to a different product with a
+  // single product_id (the old multi-line productPriceIds model is gone, so
+  // there's no per-price merge to do here). Polar prorates the difference for
+  // the rest of the period and fires subscription.updated, which our webhook
+  // mirrors into the tenants row. Seat count is reconciled separately by
+  // syncSeatCount / enforceSeatMinimum, so we don't push seats here.
+  // NOTE: add-ons in the new single-product model are handled via their own
+  // checkout/subscription, not as extra lines on the base subscription.
+  await polarApi('PATCH', `/v1/subscriptions/${tenant.polar_subscription_id}`, { product_id: newProductId });
 
   return { tier, cycle, pending_sync: true };
 }
@@ -689,8 +690,7 @@ function previewChange(tenant, { tier, cycle, addons = [], seats }) {
 // this call may reject — in that case fall back to creating a fresh
 // checkout for just the add-on price (Polar combines onto the existing sub).
 async function setAddon(tenant, addonKey, enabled) {
-  const polar = getPolar();
-  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!isConfigured()) throw new Error('Billing is not configured on this server.');
   if (!tenant?.polar_subscription_id) {
     throw new Error('No active subscription to attach the add-on to.');
   }
@@ -703,46 +703,37 @@ async function setAddon(tenant, addonKey, enabled) {
   }
   const allAddonIds = addonPriceIdsAll(addonKey); // strip any cycle when removing
 
-  // Pull current sub from Polar, compute the desired final price list.
-  const current = await polar.subscriptions.get({ id: tenant.polar_subscription_id });
+  // Pull current sub from Polar (REST — avoids the SDK's seat-pricing parse bug).
+  const current = await polarApi('GET', `/v1/subscriptions/${tenant.polar_subscription_id}`);
   const currentPriceIds = extractPriceIds(current);
   const hasIt = allAddonIds.some(id => currentPriceIds.includes(id));
 
   if (enabled && hasIt)   return { addon: addonKey, enabled: true,  no_change: true };
   if (!enabled && !hasIt) return { addon: addonKey, enabled: false, no_change: true };
 
-  const newPriceIds = enabled
-    ? [...new Set([...currentPriceIds, addonPriceId])]
-    : currentPriceIds.filter(id => !allAddonIds.includes(id));
-
-  await polar.subscriptions.update({
-    id: tenant.polar_subscription_id,
-    productPriceIds: newPriceIds,
-  });
-
-  return { addon: addonKey, enabled, no_change: false };
+  // TODO(new-Polar-model): the current API models a subscription as a SINGLE
+  // product, so add-ons can no longer be attached as extra price lines on the
+  // base subscription via productPriceIds. Re-implement add-on enable/disable as
+  // its own checkout/subscription (or a bundled product) before relying on this
+  // path. Until then, surface a clear error instead of POSTing an obsolete shape.
+  throw Object.assign(
+    new Error('Add-on changes are temporarily unavailable while billing is migrated to Polar\'s single-product model. Please contact support to add or remove the Desktop add-on.'),
+    { code: 'ADDON_UPDATE_UNSUPPORTED' }
+  );
 }
 
 // Auto-renewal toggle: turn off (= cancel at period end) or back on
 // (= uncancel). Both push to Polar and the resulting webhook syncs our DB.
 async function setAutoRenew(tenant, autoRenew) {
-  const polar = getPolar();
-  if (!polar) throw new Error('Billing is not configured on this server.');
+  if (!isConfigured()) throw new Error('Billing is not configured on this server.');
   if (!tenant?.polar_subscription_id) {
     throw new Error('No active subscription to update.');
   }
-  if (autoRenew) {
-    // Uncancel. Polar SDK: polar.subscriptions.update({ id, cancelAtPeriodEnd: false })
-    return polar.subscriptions.update({
-      id: tenant.polar_subscription_id,
-      cancelAtPeriodEnd: false,
-    });
-  } else {
-    return polar.subscriptions.update({
-      id: tenant.polar_subscription_id,
-      cancelAtPeriodEnd: true,
-    });
-  }
+  // autoRenew on  → cancel_at_period_end: false (uncancel)
+  // autoRenew off → cancel_at_period_end: true  (cancel at period end)
+  return polarApi('PATCH', `/v1/subscriptions/${tenant.polar_subscription_id}`, {
+    cancel_at_period_end: !autoRenew,
+  });
 }
 
 async function onOrderPaid(tenantId, _order) {
@@ -803,10 +794,10 @@ async function logBillingEvent({ tenantId, type, polarEventId, payload }) {
     const sub = payload?.data || {};
     const snapshot = {
       status:               sub.status || null,
-      price_id:             sub.priceId || sub.price?.id || null,
-      current_period_end:   sub.currentPeriodEnd || null,
-      cancel_at_period_end: sub.cancelAtPeriodEnd || false,
-      customer_id:          sub.customerId || sub.customer?.id || null,
+      price_id:             sub.priceId || sub.price?.id || sub.product?.id || null,
+      current_period_end:   subField(sub, 'currentPeriodEnd', 'current_period_end') || null,
+      cancel_at_period_end: subField(sub, 'cancelAtPeriodEnd', 'cancel_at_period_end') || false,
+      customer_id:          subField(sub, 'customerId', 'customer_id') || sub.customer?.id || null,
       subscription_id:      sub.id || null,
     };
 
@@ -859,13 +850,9 @@ async function enforceSeatMinimum(tenantId) {
     const current = Number(t.seat_count) || 0;
     if (current >= PER_SEAT_MIN) return;
 
-    const polar = getPolar();
-    if (!polar) return;
+    if (!isConfigured()) return;
 
-    await polar.subscriptions.update({
-      id: t.polar_subscription_id,
-      quantity: PER_SEAT_MIN,
-    });
+    await polarApi('PATCH', `/v1/subscriptions/${t.polar_subscription_id}`, { seats: PER_SEAT_MIN });
     await platform.execute(
       'UPDATE tenants SET seat_count = ? WHERE id = ?',
       [PER_SEAT_MIN, tenantId]
@@ -895,8 +882,7 @@ async function syncSeatCount(tenantId, seats) {
     console.error('[billing] local seat_count update failed:', e.message);
   }
 
-  const polar = getPolar();
-  if (!polar) return;
+  if (!isConfigured()) return;
 
   const [rows] = await platform.execute(
     'SELECT polar_subscription_id, plan FROM tenants WHERE id = ?', [tenantId]
@@ -918,7 +904,7 @@ async function syncSeatCount(tenantId, seats) {
   const billedSeats = Math.max(seats, GROWTH_BUSINESS_MIN_SEATS);
 
   try {
-    await polar.subscriptions.update({ id: subId, quantity: billedSeats });
+    await polarApi('PATCH', `/v1/subscriptions/${subId}`, { seats: billedSeats });
   } catch (e) {
     // Common cause: product is configured for customer-managed seats
     // (assigned by the customer themselves via the portal). In that case

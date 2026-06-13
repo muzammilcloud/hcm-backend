@@ -33,11 +33,28 @@ router.post('/polar', express.raw({ type: 'application/json' }), async (req, res
 
   let event;
   try {
-    const { validateEvent, WebhookVerificationError } = require('@polar-sh/sdk/webhooks');
+    const { validateEvent } = require('@polar-sh/sdk/webhooks');
     event = validateEvent(req.body, req.headers, POLAR_WEBHOOK_SECRET);
   } catch (e) {
-    // Reject invalid signatures with 403 per Polar docs. Don't leak why.
-    return res.status(403).send('');
+    const { WebhookVerificationError } = require('@polar-sh/sdk/webhooks');
+    if (e instanceof WebhookVerificationError) {
+      // Genuinely bad signature. Reject per Polar docs; don't leak why.
+      return res.status(403).send('');
+    }
+    // The signature verified (validateEvent checks the signature BEFORE mapping
+    // the payload), but the pinned SDK (0.34) couldn't map this event — most
+    // likely a seat_based subscription whose response shape the old schema
+    // doesn't model. Don't drop a valid, signed event: re-verify the signature
+    // independently and apply the raw JSON. Handlers read both the SDK's
+    // camelCase and the raw snake_case field shapes.
+    try {
+      const { Webhook } = require('standardwebhooks');
+      const wh = new Webhook(Buffer.from(POLAR_WEBHOOK_SECRET, 'utf-8').toString('base64'));
+      event = wh.verify(req.body, req.headers); // throws if the signature is invalid
+      console.warn('[polar webhook] SDK could not map event; applied via verified raw-JSON fallback:', e.message);
+    } catch (verifyErr) {
+      return res.status(403).send('');
+    }
   }
 
   const eventId = event?.id || req.headers['webhook-id'] || null;
