@@ -709,12 +709,6 @@ async function reconcileSubscription(tenant) {
     status: sub.status || null,
     product_id: sub.product?.id || sub.product_id || null,
     customer_id: customerId || null,
-    // Temporary diagnostics so we can see where Polar puts the customer id.
-    _debug: {
-      subKeys: Object.keys(sub),
-      customerField: sub.customer ? (typeof sub.customer === 'string' ? 'string' : Object.keys(sub.customer)) : null,
-      customer_id_field: sub.customer_id ?? null,
-    },
   };
 }
 
