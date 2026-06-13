@@ -399,5 +399,5 @@ module.exports = {
   audit,
 
   // constants
-  DEMO_TRIAL_DAYS,
+  TRIAL_DAYS,
 };
