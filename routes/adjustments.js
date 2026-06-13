@@ -4,6 +4,7 @@ const { getDB, logEvent } = require('../db');
 const { requireEmployee, requireTeamLead, requireAdmin } = require('../middleware/auth');
 const { dmUser, dmRoleInDept, dmAllSysAdmins, notify } = require('../services/notifications');
 const { getBusinessConfig } = require('../config/business');
+const { tenantHas } = require('../services/features');
 
 const toMySQL = iso => new Date(iso).toISOString().slice(0, 19).replace('T', ' ');
 
@@ -67,9 +68,24 @@ router.post('/employee/attendance-adjustments', requireEmployee, async (req, res
     if (!puRows[0]) return res.status(404).json({ error: 'User not found' });
     const pu = puRows[0];
 
-    // Team leads skip TL review — go straight to pending_admin
-    const isTL     = pu.portal_role === 'team-lead' || pu.portal_role === 'sys-admin';
-    const initStatus = isTL ? 'pending_admin' : 'pending_tl';
+    // Team leads skip TL review — go straight to pending_admin.
+    const isTL = pu.portal_role === 'team-lead' || pu.portal_role === 'sys-admin';
+
+    // Only route through the team-lead stage when the plan includes it AND an
+    // active team lead actually exists in the employee's department. On Starter
+    // (no team-lead role) or a department with no team lead, send the request
+    // straight to the sys-admin so it never gets stranded in pending_tl.
+    const planHasTeamLead = tenantHas(req.tenant, 'team_lead_role');
+    let deptTLs = [];
+    if (planHasTeamLead && !isTL) {
+      const [tls] = await pool.execute(
+        "SELECT id FROM portal_users WHERE department=? AND portal_role='team-lead' AND status='active'",
+        [pu.department]
+      );
+      deptTLs = tls;
+    }
+    const routeToTL  = !isTL && planHasTeamLead && deptTLs.length > 0;
+    const initStatus = routeToTL ? 'pending_tl' : 'pending_admin';
 
     const [result] = await pool.execute(
       `INSERT INTO attendance_adjustments
@@ -88,8 +104,23 @@ router.post('/employee/attendance-adjustments', requireEmployee, async (req, res
     const [adj] = await pool.execute('SELECT * FROM attendance_adjustments WHERE id=?', [result.insertId]);
     const msgText = buildRequestBlock(adj[0], pu.name, null, null);
 
-    if (isTL) {
-      // TL's own request → notify sys-admins
+    if (routeToTL) {
+      // Goes through the team-lead stage → notify team leads in their department
+      for (const t of deptTLs) {
+        await notify(pool, {
+          recipient_user_id: t.id,
+          type: 'adjustment_submitted',
+          title: `Adjustment from ${pu.name}`,
+          body:  `${pu.department} · ${requested_date}`,
+          link:  ADJ_LINK(adj[0].id),
+          slackText: `📋 *New attendance adjustment request from ${pu.name}* (${pu.department}) — needs your review.`,
+          slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+        });
+      }
+    } else {
+      // No team-lead stage (own request, Starter plan, or no TL in dept) →
+      // notify sys-admins directly; the request is already pending_admin.
+      const who = isTL ? `Team Lead ${pu.name}` : pu.name;
       const [admins] = await pool.execute(
         "SELECT id FROM portal_users WHERE portal_role='sys-admin' AND status='active'"
       );
@@ -100,24 +131,7 @@ router.post('/employee/attendance-adjustments', requireEmployee, async (req, res
           title: `Adjustment from ${pu.name}`,
           body:  `${pu.department} · ${requested_date}`,
           link:  ADJ_LINK(adj[0].id),
-          slackText: `📋 *Attendance adjustment request from Team Lead ${pu.name}* (${pu.department}) — needs your review.`,
-          slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
-        });
-      }
-    } else {
-      // Regular employee → notify team leads in their department
-      const [tls] = await pool.execute(
-        "SELECT id FROM portal_users WHERE department=? AND portal_role='team-lead' AND status='active'",
-        [pu.department]
-      );
-      for (const t of tls) {
-        await notify(pool, {
-          recipient_user_id: t.id,
-          type: 'adjustment_submitted',
-          title: `Adjustment from ${pu.name}`,
-          body:  `${pu.department} · ${requested_date}`,
-          link:  ADJ_LINK(adj[0].id),
-          slackText: `📋 *New attendance adjustment request from ${pu.name}* (${pu.department}) — needs your review.`,
+          slackText: `📋 *Attendance adjustment request from ${who}* (${pu.department}) — needs your review.`,
           slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
         });
       }
