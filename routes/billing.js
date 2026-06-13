@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { getPlatformDB } = require('../db');
-const { createCheckout, getCustomerPortalUrl, setAutoRenew, setAddon, changePlan, previewChange, isConfigured } = require('../services/billing');
+const { createCheckout, getCustomerPortalUrl, setAutoRenew, setAddon, changePlan, reconcileSubscription, previewChange, isConfigured } = require('../services/billing');
 const { PRICE_IDS, ADDON_PRICE_IDS, addonPriceFor } = require('../lib/polarConstants');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +157,25 @@ router.post('/billing/change-plan', requireAdmin, async (req, res, next) => {
       cycle: req.body?.cycle || 'monthly',
     });
     res.json({ ...result, message: 'Plan change submitted to Polar. Polar will prorate today\'s charge and your subscription will update within a few seconds.' });
+  } catch (e) { next(e); }
+});
+
+// POST /api/billing/reconcile — pull the tenant's current active subscription
+// straight from Polar and apply it locally. Recovers from a missed webhook
+// (e.g. the Polar webhook endpoint wasn't registered when the customer
+// subscribed, so the tenant is still on `demo` while Polar shows it active).
+router.post('/billing/reconcile', requireAdmin, async (req, res, next) => {
+  try {
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'Billing is not configured on this server yet.' });
+    }
+    const tenant = await loadTenant(req);
+    if (!tenant) return res.status(404).json({ error: 'No tenant context.' });
+    const result = await reconcileSubscription(tenant);
+    if (!result.reconciled) {
+      return res.status(404).json({ ...result, message: 'No active subscription found in Polar to sync. If you just subscribed, give it a moment and retry.' });
+    }
+    res.json({ ...result, message: 'Subscription synced from Polar.' });
   } catch (e) { next(e); }
 });
 

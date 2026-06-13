@@ -588,6 +588,58 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
   return { tier, cycle, pending_sync: true };
 }
 
+// Pull the tenant's CURRENT active subscription straight from Polar and apply it
+// to our DB — a manual reconcile for when a webhook was missed (e.g. the Polar
+// webhook endpoint wasn't registered yet, so subscription.created/active never
+// arrived and the tenant is stuck on `demo` while Polar already has an active
+// subscription). Uses the server's own POLAR_ACCESS_TOKEN — no customer token
+// needed. Safe to call repeatedly: it runs the same idempotent upsert the
+// webhook uses.
+async function reconcileSubscription(tenant) {
+  if (!isConfigured()) throw new Error('Billing is not configured on this server.');
+  if (!tenant?.id) throw new Error('tenant required');
+
+  // 1) Most direct: find the subscription by the tenant_id metadata we stamp on
+  //    every checkout. Falls back to the Polar customer (stored id, else email).
+  let sub = null;
+  try {
+    const byMeta = await polarApi('GET',
+      `/v1/subscriptions?metadata[tenant_id]=${encodeURIComponent(String(tenant.id))}&active=true&limit=1`);
+    sub = byMeta.items?.[0] || null;
+  } catch (_) { /* fall through to customer lookup */ }
+
+  if (!sub) {
+    let customerId = tenant.polar_customer_id || null;
+    if (!customerId && tenant.contact_email) {
+      try {
+        const cust = await polarApi('GET',
+          `/v1/customers?email=${encodeURIComponent(tenant.contact_email)}&limit=1`);
+        customerId = cust.items?.[0]?.id || null;
+      } catch (_) {}
+    }
+    if (customerId) {
+      try {
+        const bySub = await polarApi('GET',
+          `/v1/subscriptions?customer_id=${encodeURIComponent(customerId)}&active=true&limit=1`);
+        sub = bySub.items?.[0] || null;
+      } catch (_) {}
+    }
+  }
+
+  if (!sub) {
+    return { reconciled: false, reason: 'No active subscription found in Polar for this tenant.' };
+  }
+
+  // 2) Apply via the exact path the webhook uses (idempotent upsert).
+  await onSubscriptionUpserted(tenant.id, sub);
+  return {
+    reconciled: true,
+    subscription_id: sub.id || null,
+    status: sub.status || null,
+    product_id: sub.product?.id || sub.product_id || null,
+  };
+}
+
 // Locally compute a prorated preview for a plan change OR add-on toggle.
 // Doesn't hit Polar — uses the cached subscription state from our DB
 // plus the desired new shape to estimate the delta. Polar does the
@@ -923,6 +975,7 @@ module.exports = {
   setAutoRenew,
   setAddon,
   changePlan,
+  reconcileSubscription,
   previewChange,
   subscriptionHasAddon,
   isConfigured,
