@@ -203,13 +203,25 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
 async function getCustomerPortalUrl(tenant) {
   // null = genuinely no Polar customer on file (caller shows "start a plan").
   if (!isConfigured() || !tenant?.polar_customer_id) return null;
+  // Team/business customers (created when "I'm purchasing as a business" is
+  // chosen at checkout) require a member_id for the portal session — customer_id
+  // alone errors "member_id is required for team customers." Individual
+  // customers have no members, so this stays unset. Prefer the member whose
+  // email matches the workspace contact (the owner), else the first member.
+  const body = { customer_id: tenant.polar_customer_id };
+  try {
+    const members = await polarApi('GET',
+      `/v1/members/?customer_id=${encodeURIComponent(tenant.polar_customer_id)}&limit=20`);
+    const list = members.items || [];
+    const owner = list.find(m => (m.email || '').toLowerCase() === (tenant.contact_email || '').toLowerCase());
+    const memberId = (owner || list[0])?.id;
+    if (memberId) body.member_id = memberId;
+  } catch (_) { /* not a team customer / members not listable — proceed without */ }
+
   // Let session-creation errors propagate so the route can surface the real
-  // cause instead of a misleading "no customer" message.
-  // Trailing slash matters: POST /v1/customer-sessions (no slash) redirects and
-  // the redirected POST hangs; the SDK targets /v1/customer-sessions/.
-  const session = await polarApi('POST', '/v1/customer-sessions/', {
-    customer_id: tenant.polar_customer_id,
-  });
+  // cause. Trailing slash matters: POST /v1/customer-sessions (no slash)
+  // redirects and the redirected POST hangs; the SDK targets the slashed path.
+  const session = await polarApi('POST', '/v1/customer-sessions/', body);
   return session.customer_portal_url || session.customerPortalUrl || null;
 }
 
