@@ -105,34 +105,40 @@ async function createCheckout(tenant, { tier, cycle = 'monthly', addons = [], su
     if (addonPriceId) products.push(addonPriceId);
   }
 
-  const checkoutBody = {
+  // Build the checkout request in the REST API's snake_case shape and POST it
+  // directly, instead of polar.checkouts.create(). The pinned SDK (0.34.x) throws
+  // a *response*-validation error on seat_based price products (Growth/Business):
+  // it can't parse the seat fields Polar returns, so a perfectly valid checkout
+  // surfaced as "Response validation failed" — which the archived-detection below
+  // then mislabelled as an archived product. The raw REST response parses cleanly
+  // for both fixed and seat_based products (verified against sandbox). Fixed-price
+  // tiers (Starter) happened to work through the SDK, which is why only Growth/
+  // Business broke. A full SDK upgrade would also fix change-plan; see note there.
+  const restBody = {
     products,
-    customerEmail: tenant.contact_email,
-    successUrl,
-    metadata: {
-      tenant_id:   String(tenant.id),
-      tenant_slug: tenant.slug,
-    },
+    metadata: { tenant_id: String(tenant.id), tenant_slug: tenant.slug },
   };
+  if (tenant.contact_email) restBody.customer_email = tenant.contact_email;
+  if (successUrl)           restBody.success_url    = successUrl;
 
-  // For per-seat tiers (Growth, Business), open checkout at the 10-seat
-  // floor so the customer sees the real minimum bill at the Polar
-  // checkout page (not $3/mo for a single seat). The enforceSeatMinimum
-  // safety net on the webhook would catch a low quantity anyway, but
-  // setting it here means the customer sees the truth on the first screen.
-  if (PER_SEAT_TIERS.includes(tier)) {
-    checkoutBody.customerSeats = PER_SEAT_MIN;
-  }
+  // For per-seat tiers (Growth, Business), open checkout at the seat floor so the
+  // customer sees the real minimum bill. The webhook seat-minimum net enforces it
+  // regardless.
+  if (PER_SEAT_TIERS.includes(tier)) restBody.seats = PER_SEAT_MIN;
 
+  const apiHost = POLAR_ENV === 'production' ? 'https://api.polar.sh' : 'https://sandbox-api.polar.sh';
   let checkout;
   try {
-    checkout = await polar.checkouts.create(checkoutBody);
+    const resp = await fetch(`${apiHost}/v1/checkouts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${POLAR_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(restBody),
+    });
+    checkout = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw Object.assign(new Error(`Polar checkout failed (HTTP ${resp.status})`), { body: checkout });
   } catch (e) {
-    // Surface the real cause instead of a generic "Response validation failed".
-    // The most common production failure is a configured product/price that was
-    // archived in the Polar dashboard — checkout then can't be created and the
-    // customer is blocked from subscribing. Log which products were tried so the
-    // env var (POLAR_<TIER>_<CYCLE>_PRICE_ID) can be repointed to an active one.
+    // Surface the real cause. A genuinely archived/inactive product is the one
+    // case worth calling out by name so the env var can be repointed.
     const detail = JSON.stringify(e?.body ?? e?.detail ?? e?.message ?? e);
     if (/archived/i.test(detail)) {
       console.error('[billing] Polar checkout blocked — a configured product is ARCHIVED.',
