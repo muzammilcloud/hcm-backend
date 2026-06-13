@@ -654,10 +654,18 @@ async function reconcileSubscription(tenant) {
     return { reconciled: false, reason: 'No active subscription found in Polar for this tenant.' };
   }
 
-  // Ensure we have the Polar customer id — it's required for the customer portal
-  // and the subscription-list payload doesn't always carry it. Prefer the sub's
-  // own field, then the stored id, then a lookup by contact email. Stamp it onto
-  // the sub so onSubscriptionUpserted persists polar_customer_id.
+  // The subscription-list object can be abbreviated. Fetch the full subscription
+  // by id so we get the complete shape (customer, prices, period, etc.).
+  if (sub.id) {
+    try {
+      const full = await polarApi('GET', `/v1/subscriptions/${sub.id}`);
+      if (full && full.id) sub = full;
+    } catch (_) { /* keep the list object */ }
+  }
+
+  // Ensure we have the Polar customer id — required for the customer portal.
+  // Prefer the sub's own field(s), then stored id, then a lookup by contact
+  // email. Stamp it onto the sub so onSubscriptionUpserted persists it.
   let customerId = sub.customer_id || sub.customerId || sub.customer?.id
     || tenant.polar_customer_id || null;
   if (!customerId && tenant.contact_email) {
@@ -677,6 +685,12 @@ async function reconcileSubscription(tenant) {
     status: sub.status || null,
     product_id: sub.product?.id || sub.product_id || null,
     customer_id: customerId || null,
+    // Temporary diagnostics so we can see where Polar puts the customer id.
+    _debug: {
+      subKeys: Object.keys(sub),
+      customerField: sub.customer ? (typeof sub.customer === 'string' ? 'string' : Object.keys(sub.customer)) : null,
+      customer_id_field: sub.customer_id ?? null,
+    },
   };
 }
 
