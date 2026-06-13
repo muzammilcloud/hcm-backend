@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { tenantHas } = require('../services/features');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/setup/checklist
@@ -47,22 +48,26 @@ router.get('/setup/checklist', requireAdmin, async (req, res, next) => {
       complete: taxComplete,
     });
 
-    // 3. At least one custom salary component (Basic Salary alone doesn't count)
-    let componentsComplete = false;
-    try {
-      const [[{ c }]] = await pool.execute(
-        `SELECT COUNT(*) AS c FROM salary_components WHERE system_managed = 0 AND active = 1`
-      );
-      componentsComplete = Number(c) > 0;
-    } catch (_) {}
-    items.push({
-      id: 'components',
-      label: 'Add salary components',
-      detail: 'Earnings (allowances, bonuses) and deductions (PF, insurance, etc.)',
-      tab: 'salary-components',
-      required: false,
-      complete: componentsComplete,
-    });
+    // 3. At least one custom salary component (Basic Salary alone doesn't count).
+    // Custom components are a Growth-only feature, so only surface this task on
+    // plans that can actually do it.
+    if (tenantHas(req.tenant, 'custom_salary_components')) {
+      let componentsComplete = false;
+      try {
+        const [[{ c }]] = await pool.execute(
+          `SELECT COUNT(*) AS c FROM salary_components WHERE system_managed = 0 AND active = 1`
+        );
+        componentsComplete = Number(c) > 0;
+      } catch (_) {}
+      items.push({
+        id: 'components',
+        label: 'Add salary components',
+        detail: 'Earnings (allowances, bonuses) and deductions (PF, insurance, etc.)',
+        tab: 'salary-components',
+        required: false,
+        complete: componentsComplete,
+      });
+    }
 
     // 4. Slack integration connected (optional)
     let slackComplete = false;
@@ -81,22 +86,26 @@ router.get('/setup/checklist', requireAdmin, async (req, res, next) => {
       complete: slackComplete,
     });
 
-    // 5. SMTP integration connected (optional)
-    let smtpComplete = false;
-    try {
-      const [[{ c }]] = await pool.execute(
-        `SELECT COUNT(*) AS c FROM tenant_integrations WHERE integration_type = 'smtp' AND config_encrypted IS NOT NULL`
-      );
-      smtpComplete = Number(c) > 0;
-    } catch (_) {}
-    items.push({
-      id: 'smtp',
-      label: 'Connect your email server',
-      detail: 'Optional — send invites and reports from your own domain',
-      tab: 'integrations',
-      required: false,
-      complete: smtpComplete,
-    });
+    // 5. SMTP integration connected (optional). Bring-your-own SMTP is a
+    // Growth-only feature — don't prompt Starter tenants to connect an email
+    // server they can't use (they send through the platform default).
+    if (tenantHas(req.tenant, 'smtp_integration')) {
+      let smtpComplete = false;
+      try {
+        const [[{ c }]] = await pool.execute(
+          `SELECT COUNT(*) AS c FROM tenant_integrations WHERE integration_type = 'smtp' AND config_encrypted IS NOT NULL`
+        );
+        smtpComplete = Number(c) > 0;
+      } catch (_) {}
+      items.push({
+        id: 'smtp',
+        label: 'Connect your email server',
+        detail: 'Optional — send invites and reports from your own domain',
+        tab: 'integrations',
+        required: false,
+        complete: smtpComplete,
+      });
+    }
 
     // 6. First team member invited (more than just the sys-admin)
     let invitedComplete = false;

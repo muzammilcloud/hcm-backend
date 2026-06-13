@@ -3,7 +3,7 @@ const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBir
 const { postLeaveReportToSlack } = require('./slack');
 const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./otReconciliation');
 const { tenantHas } = require('./features');
-const { getBusinessConfig, getTenantTimezone } = require('../config/business');
+const { getBusinessConfig, COUNTRY_TZ, DEFAULT_TZ } = require('../config/business');
 
 // Read wall-clock hour/minute in a given IANA timezone (server may run in any tz).
 function nowIn(tz) {
@@ -287,14 +287,23 @@ async function sendDailyLeaveReport() {
 async function maybeSendDailyLeaveReport(tenant) {
   const pool = await getDB();
 
-  // Resolve the tenant's timezone from its country.
-  const tz = await getTenantTimezone(pool);
+  // Resolve the tenant's timezone (from country) and the admin-chosen send hour
+  // (0–23, tenant-local; default noon) in a single read.
+  let countryCode = null, reportHour = 12;
+  try {
+    const [s] = await pool.execute(
+      'SELECT country_code, daily_report_hour FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
+    );
+    countryCode = s[0]?.country_code || null;
+    const h = Number(s[0]?.daily_report_hour);
+    if (Number.isInteger(h) && h >= 0 && h <= 23) reportHour = h;
+  } catch (_) { /* defaults below */ }
+  const tz = (countryCode && COUNTRY_TZ[countryCode]) || DEFAULT_TZ;
 
-  // Only fire at noon, local time. The scheduler ticks every 30 min, so the
-  // 12:00–12:59 window has exactly one local-hour===12 moment we act on (the
-  // DB guard de-dupes the two ticks inside that hour).
+  // Only fire at the configured hour, local time. The scheduler ticks every
+  // 30 min, so the HH:00–HH:59 window has the two ticks the DB guard de-dupes.
   const { hour } = nowIn(tz);
-  if (hour !== 12) return;
+  if (hour !== reportHour) return;
 
   // Tenant-local calendar date (YYYY-MM-DD) and weekday (sun/mon/…).
   const todayLocal = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());

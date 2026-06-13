@@ -42,7 +42,18 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       company_name, company_address, company_logo_url,
       slip_title, slip_signatory_name, slip_signatory_title,
       daily_working_hours, working_days, monthly_required_hours_override,
+      daily_report_hour,
     } = req.body || {};
+
+    // Daily Leave & WFH report send hour (0–23, tenant-local). Optional.
+    let nextReportHour = null;
+    if (daily_report_hour != null && daily_report_hour !== '') {
+      const h = Number(daily_report_hour);
+      if (!Number.isInteger(h) || h < 0 || h > 23) {
+        return res.status(400).json({ error: 'daily_report_hour must be an integer 0–23' });
+      }
+      nextReportHour = h;
+    }
 
     const [rows] = await pool.execute('SELECT * FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
     if (rows.length === 0) return res.status(404).json({ error: 'Settings not initialized' });
@@ -113,6 +124,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
          slip_signatory_title = COALESCE(?, slip_signatory_title),
          daily_working_hours  = COALESCE(?, daily_working_hours),
          working_days         = COALESCE(?, working_days),
+         daily_report_hour    = COALESCE(?, daily_report_hour),
          monthly_required_hours_override = ${nextMonthlyOverride === undefined ? 'monthly_required_hours_override' : '?'}
        WHERE singleton_key = 1`,
       [
@@ -126,6 +138,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
         slip_signatory_title ?? null,
         nextDailyHours,
         nextWorkingDays,
+        nextReportHour,
         ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
       ]
     );

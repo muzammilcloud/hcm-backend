@@ -177,6 +177,10 @@ async function initTenantSchema(poolArg) {
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN daily_working_hours DECIMAL(4,2) NOT NULL DEFAULT 9.00`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN working_days VARCHAR(40) NOT NULL DEFAULT 'mon,tue,wed,thu,fri'`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN monthly_required_hours_override DECIMAL(6,2) NULL DEFAULT NULL`); } catch (_) {}
+  // Hour-of-day (0–23, tenant-local) the daily Leave & WFH report is sent. The
+  // scheduler interprets it in the tenant's timezone (derived from country).
+  // Default 12 = noon, preserving the prior behaviour.
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN daily_report_hour TINYINT NOT NULL DEFAULT 12`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}
