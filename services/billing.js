@@ -357,7 +357,7 @@ async function onSubscriptionUpserted(tenantId, sub) {
          status                = CASE WHEN ? IN ('active','trialing') THEN 'active' ELSE status END
      WHERE id = ?`,
     [
-      subField(sub, 'customerId', 'customer_id') || null,
+      subField(sub, 'customerId', 'customer_id') || sub.customer?.id || null,
       sub.id || null,
       sub.status || 'unknown',
       plan,
@@ -600,6 +600,15 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
   // checkout/subscription, not as extra lines on the base subscription.
   await polarApi('PATCH', `/v1/subscriptions/${tenant.polar_subscription_id}`, { product_id: newProductId });
 
+  // Mirror the new tier/cycle locally so the UI updates immediately. Polar will
+  // also fire subscription.updated; reconcile/the webhook keep us authoritative.
+  try {
+    await getPlatformDB().execute(
+      'UPDATE tenants SET plan = ?, billing_cycle = ? WHERE id = ?',
+      [tier, cycle, tenant.id]
+    );
+  } catch (e) { console.error('[billing] local plan mirror failed:', e.message); }
+
   return { tier, cycle, pending_sync: true };
 }
 
@@ -798,9 +807,18 @@ async function setAutoRenew(tenant, autoRenew) {
   }
   // autoRenew on  → cancel_at_period_end: false (uncancel)
   // autoRenew off → cancel_at_period_end: true  (cancel at period end)
-  return polarApi('PATCH', `/v1/subscriptions/${tenant.polar_subscription_id}`, {
+  const result = await polarApi('PATCH', `/v1/subscriptions/${tenant.polar_subscription_id}`, {
     cancel_at_period_end: !autoRenew,
   });
+  // Mirror locally right away so the UI reflects the change without waiting on
+  // the subscription.updated webhook (which may be delayed or not configured).
+  try {
+    await getPlatformDB().execute(
+      'UPDATE tenants SET cancel_at_period_end = ? WHERE id = ?',
+      [autoRenew ? 0 : 1, tenant.id]
+    );
+  } catch (e) { console.error('[billing] local auto-renew mirror failed:', e.message); }
+  return result;
 }
 
 async function onOrderPaid(tenantId, _order) {
