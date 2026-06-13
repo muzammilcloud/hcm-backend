@@ -105,14 +105,26 @@ function getPolar() {
 // obsolete and rejected by the live API.)
 const polarApiHost = () => (POLAR_ENV === 'production' ? 'https://api.polar.sh' : 'https://sandbox-api.polar.sh');
 async function polarApi(method, path, body) {
-  const resp = await fetch(polarApiHost() + path, {
-    method,
-    headers: { Authorization: `Bearer ${POLAR_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw Object.assign(new Error(`Polar ${method} ${path} → HTTP ${resp.status}`), { body: data, status: resp.status });
-  return data;
+  // Hard timeout so a stuck Polar request can never hang the whole HTTP handler
+  // (which surfaced to the client as a Cloudflare 502 Bad Gateway).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resp = await fetch(polarApiHost() + path, {
+      method,
+      headers: { Authorization: `Bearer ${POLAR_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw Object.assign(new Error(`Polar ${method} ${path} → HTTP ${resp.status}`), { body: data, status: resp.status });
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`Polar ${method} ${path} timed out after 15s`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Create a Polar checkout session for the given tenant. Returns the checkout
@@ -193,7 +205,9 @@ async function getCustomerPortalUrl(tenant) {
   if (!isConfigured() || !tenant?.polar_customer_id) return null;
   // Let session-creation errors propagate so the route can surface the real
   // cause instead of a misleading "no customer" message.
-  const session = await polarApi('POST', '/v1/customer-sessions', {
+  // Trailing slash matters: POST /v1/customer-sessions (no slash) redirects and
+  // the redirected POST hangs; the SDK targets /v1/customer-sessions/.
+  const session = await polarApi('POST', '/v1/customer-sessions/', {
     customer_id: tenant.polar_customer_id,
   });
   return session.customer_portal_url || session.customerPortalUrl || null;
