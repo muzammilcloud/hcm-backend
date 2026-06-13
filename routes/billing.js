@@ -255,14 +255,18 @@ router.get('/billing/portal-url', requireAdmin, async (req, res, next) => {
     try {
       url = await getCustomerPortalUrl(tenant);
     } catch (e) {
-      return res.status(502).json({
+      // NOTE: return 200 so Cloudflare doesn't intercept an origin 5xx and
+      // replace it with its own error page (which hid the real cause). The FE
+      // treats a missing `url` as a failure regardless of HTTP status.
+      return res.json({
+        url: null,
         error: 'Could not open the customer portal — Polar session creation failed.',
         code:  'PORTAL_SESSION_FAILED',
-        detail: e?.body ?? e?.message ?? String(e),
+        detail: typeof e?.body === 'object' ? JSON.stringify(e.body) : (e?.body ?? e?.message ?? String(e)),
       });
     }
     if (!url) {
-      return res.status(502).json({ error: 'Polar returned no portal URL.', code: 'PORTAL_NO_URL' });
+      return res.json({ url: null, error: 'Polar returned no portal URL.', code: 'PORTAL_NO_URL' });
     }
     res.json({ url });
   } catch (e) { next(e); }
