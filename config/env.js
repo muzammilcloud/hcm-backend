@@ -10,13 +10,12 @@ const REQUIRED = [
 
 const RECOMMENDED = [
   'FRONTEND_URL',     // CORS allowlist; falls back to localhost:5173 if missing
-  'SLACK_BOT_TOKEN',  // Slack DMs / OT prompts skip silently if absent
-  'SLACK_SIGNING_SECRET',
-  'SMTP_HOST',        // Password reset / report emails fail if absent
-  'SMTP_USER',
-  'SMTP_PASS',
   'ADMIN_USERNAME',   // Legacy admin login still works on defaults if missing
   'ADMIN_PASSWORD',
+  // Slack (SLACK_BOT_TOKEN / SLACK_SIGNING_SECRET) and SMTP (SMTP_HOST / SMTP_USER
+  // / SMTP_PASS) are intentionally NOT listed: they are configured per-tenant now
+  // (Slack via the /api/slack/<slug> integration + getSlackCreds; SMTP per-tenant),
+  // so a global value isn't required and warning about it at startup is just noise.
 ];
 
 function validateEnv() {
