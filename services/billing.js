@@ -877,19 +877,34 @@ async function setAddon(tenant, addonKey, enabled, { successUrl } = {}) {
   }
   const allAddonIds = addonPriceIdsAll(addonKey);
 
-  // Is the add-on already an active subscription for this customer?
-  let addonSub = null;
+  // Look at the customer's active subscriptions to see what's already there.
+  let subs = [];
   if (tenant.polar_customer_id) {
     try {
-      const subs = await polarApi('GET',
+      const resp = await polarApi('GET',
         `/v1/subscriptions?customer_id=${encodeURIComponent(tenant.polar_customer_id)}&active=true&limit=50`);
-      addonSub = (subs.items || []).find(s => allAddonIds.includes(s.product_id || s.product?.id)) || null;
+      subs = resp.items || [];
     } catch (_) {}
   }
+  const addonSub = subs.find(s => allAddonIds.includes(s.product_id || s.product?.id)) || null;
+  const baseSub  = subs.find(s => tierFromPriceId(s.product_id || s.product?.id)) || null;
 
   if (enabled) {
     if (addonSub) return { addon: addonKey, enabled: true, no_change: true };
-    // Open a checkout for the add-on product, tied to the same customer.
+    // Verified by live testing: Polar bills ONE active subscription per customer
+    // ("You already have an active subscription" on a 2nd checkout). So the
+    // Desktop add-on cannot be a separate subscription alongside the base plan —
+    // it has to be a bundled "plan + Desktop" product that the subscription
+    // switches to (via the existing change-plan flow). Those bundle products
+    // aren't set up yet, so report that honestly instead of opening a checkout
+    // Polar will reject.
+    if (baseSub) {
+      throw Object.assign(
+        new Error('The Desktop add-on can’t be attached to an active subscription: Polar bills one subscription per customer, so it needs a bundled "plan + Desktop" product (set up in Polar) that the plan switches to. It isn’t configured yet — contact support to enable it.'),
+        { code: 'ADDON_NEEDS_BUNDLE' }
+      );
+    }
+    // No base subscription (edge case) → a standalone add-on checkout is valid.
     const checkoutBody = {
       products: [addonProductId],
       metadata: { tenant_id: String(tenant.id), tenant_slug: tenant.slug, addon: addonKey },
@@ -900,8 +915,7 @@ async function setAddon(tenant, addonKey, enabled, { successUrl } = {}) {
     return { addon: addonKey, enabled: true, checkout_url: checkout.url };
   }
 
-  // Disable → cancel the add-on subscription at period end (keeps access until
-  // the period ends; the webhook/reconcile removes it from tenants.addons).
+  // Disable → cancel the add-on subscription at period end (if it exists).
   if (!addonSub) return { addon: addonKey, enabled: false, no_change: true };
   await polarApi('PATCH', `/v1/subscriptions/${addonSub.id}`, { cancel_at_period_end: true });
   return { addon: addonKey, enabled: false, pending_cancel: true };
