@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { getDB, logEvent } = require('../db');
 const { requireTeamLead } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/features');
 const { sendLeaveStatusEmail } = require('../services/email');
 const { notify } = require('../services/notifications');
 const { getBusinessConfig } = require('../config/business');
@@ -382,7 +383,7 @@ router.get('/teamlead/team/ot-requests', requireTeamLead, async (req, res) => {
 
 // GET /api/teamlead/team/reports/overtime?from=&to=&employee_id=
 // Derived per-day OT report (mirrors /api/reports/overtime), team-scoped.
-router.get('/teamlead/team/reports/overtime', requireTeamLead, async (req, res) => {
+router.get('/teamlead/team/reports/overtime', requireTeamLead, requireFeature('overtime_detection'), async (req, res) => {
   try {
     if (!req.teamLeadEmployeeId) return res.json([]);
     const pool = await getDB();
@@ -413,7 +414,7 @@ router.get('/teamlead/team/reports/overtime', requireTeamLead, async (req, res) 
 
 // GET /api/teamlead/team/reports/monthly-reconciliation?year=&month=
 // Team-lead: monthly OT reconciliation for the lead's reports only.
-router.get('/teamlead/team/reports/monthly-reconciliation', requireTeamLead, async (req, res) => {
+router.get('/teamlead/team/reports/monthly-reconciliation', requireTeamLead, requireFeature('monthly_reconciliation'), async (req, res) => {
   try {
     if (!req.teamLeadEmployeeId) return res.json({ year: null, month: null, rows: [] });
     const pool = await getDB();

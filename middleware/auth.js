@@ -1,4 +1,5 @@
 const { getDB } = require('../db');
+const { tenantHas } = require('../services/features');
 
 // These middlewares authenticate against TENANT tables (portal_users / sessions).
 // If there's no tenant context (e.g. a request that landed on a platform
@@ -89,6 +90,11 @@ async function requireTeamLead(req, res, next) {
     req.teamDepartment      = rows[0].department;
     req.portalRole          = rows[0].portal_role;
     req.teamLeadEmployeeId  = rows[0].employee_id;
+    // A tenant that downgraded to Starter loses the team-lead stage, so block
+    // residual team-lead API access for actual team-leads (sys-admins always pass).
+    if (rows[0].portal_role === 'team-lead' && !tenantHas(req.tenant, 'team_lead_role')) {
+      return res.status(402).json({ error: 'Team-lead features require the Growth plan.', code: 'FEATURE_LOCKED', feature: 'team_lead_role' });
+    }
     next();
   } catch (e) { res.status(500).json({ error: e.message }); }
 }

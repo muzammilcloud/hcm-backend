@@ -70,7 +70,7 @@ router.post('/reports/send-weekly', requireAdmin, async (req, res) => {
 });
 
 // POST /api/reports/send-monthly — Manual trigger
-router.post('/reports/send-monthly', requireAdmin, async (req, res) => {
+router.post('/reports/send-monthly', requireAdmin, requireFeature('monthly_reports'), async (req, res) => {
   await sendMonthlyReports();
   res.json({ success: true, message: 'Monthly reports sent' });
 });
@@ -142,7 +142,7 @@ router.get('/reports/departments', requireAdmin, async (req, res) => {
 });
 
 // GET /api/reports/overtime — Admin
-router.get('/reports/overtime', requireAdmin, async (req, res) => {
+router.get('/reports/overtime', requireAdmin, requireFeature('overtime_detection'), async (req, res) => {
   const { from, to, employee_id, department } = req.query;
   try {
     const pool = await getDB();
@@ -250,7 +250,7 @@ router.get('/employee/monthly-reconciliation', requireEmployee, requireFeature('
 });
 
 // GET /api/employee/overtime — Employee: own overtime
-router.get('/employee/overtime', requireEmployee, async (req, res) => {
+router.get('/employee/overtime', requireEmployee, requireFeature('overtime_detection'), async (req, res) => {
   const { from, to } = req.query;
   try {
     const pool = await getDB();
