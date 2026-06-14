@@ -146,11 +146,13 @@ async function generateSalarySlipPdf({ employee, slip, settings }) {
     EMP_DEPT:    employee?.department || '',
     EMP_CODE:    employee?.emp_code || '—',
     SLIP_MONTH:  month,
-    DAYS_WORKED: formatNumber(slip?.days_worked || 0),
+    DAYS_WORKED: formatNumber(slip?.days_worked ?? slip?.days_paid ?? 0),
 
-    GROSS:           money(slip?.gross_salary || 0),
-    NET:             money(slip?.net_salary || 0),
-    TOTAL_DEDUCT:    money(slip?.total_deductions || 0),
+    // calculateSlip returns total_earnings / net; accept both shapes so the slip
+    // never renders Gross/Net as 0 (was reading non-existent gross_salary/net_salary).
+    GROSS:           money(slip?.gross_salary ?? slip?.total_earnings ?? 0),
+    NET:             money(slip?.net_salary   ?? slip?.net           ?? 0),
+    TOTAL_DEDUCT:    money(slip?.total_deductions ?? 0),
 
     EARNINGS_ROWS:   earnings.map(r => `<tr><td>${r.label}</td><td class="amt">${r.amount}</td></tr>`).join(''),
     DEDUCTION_ROWS:  deductions.map(r => `<tr><td>${r.label}</td><td class="amt">${r.amount}</td></tr>`).join(''),
