@@ -200,7 +200,7 @@ async function checkBirthdays() {
 
 // Daily leave + WFH report — fires after 12:00 PKT, posts to a dedicated Slack channel.
 // Includes Annual / Sick / Casual / WFH / Paternity / Maternity. Excludes Public Holiday and Unpaid Leave.
-async function sendDailyLeaveReport() {
+async function sendDailyLeaveReport(tz = 'Asia/Karachi') {
   console.log('📊 Sending daily leave & WFH report...');
   try {
     const pool = await getDB();
@@ -208,8 +208,9 @@ async function sendDailyLeaveReport() {
     const TYPES = ['Work From Home', 'Sick Leave', 'Casual Leave', 'Annual Leave', 'Paternity Leave', 'Maternity Leave'];
     const placeholders = TYPES.map(() => '?').join(',');
 
-    // Today in PKT — pin the comparison to Asia/Karachi rather than the server's own clock.
-    const todayPkt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()); // YYYY-MM-DD
+    // "Today" in the TENANT's timezone (passed from maybeSendDailyLeaveReport),
+    // not a hardcoded Asia/Karachi.
+    const todayPkt = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); // YYYY-MM-DD
 
     const [rows] = await pool.execute(`
       SELECT
@@ -341,7 +342,7 @@ async function maybeSendDailyLeaveReport(tenant) {
   }
   if (!won) return; // already sent today
 
-  await sendDailyLeaveReport();
+  await sendDailyLeaveReport(tz);
 }
 
 // Scheduled report jobs
