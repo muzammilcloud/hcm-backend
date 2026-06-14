@@ -813,7 +813,15 @@ router.get('/calendar', requireAdmin, async (req, res) => {
 
     const [timeEntries] = await pool.execute(timeQ, tParams);
 
-    res.json({ shifts, leaves, holidays, pending, timeEntries });
+    // Workspace working days (CSV of day keys) so the calendar greys non-working
+    // days and computes absences per the real schedule, not a hardcoded Sat/Sun.
+    let working_days = 'mon,tue,wed,thu,fri';
+    try {
+      const [s] = await pool.execute('SELECT working_days FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
+      if (s[0]?.working_days) working_days = s[0].working_days;
+    } catch (_) {}
+
+    res.json({ shifts, leaves, holidays, pending, timeEntries, working_days });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -855,7 +863,16 @@ router.get('/employee/calendar', requireEmployee, async (req, res) => {
       GROUP BY DATE(clock_in)
     `, [req.employeeId, from || '2000-01-01', to || '2099-12-31']);
 
-    res.json({ shifts, leaves, holidays, dailyHours });
+    // Tenant working days (CSV of day keys: mon,tue,…) so the calendar can grey
+    // out non-working days per the workspace's actual schedule instead of a
+    // hardcoded Sat/Sun weekend.
+    let working_days = 'mon,tue,wed,thu,fri';
+    try {
+      const [s] = await pool.execute('SELECT working_days FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
+      if (s[0]?.working_days) working_days = s[0].working_days;
+    } catch (_) {}
+
+    res.json({ shifts, leaves, holidays, dailyHours, working_days });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
