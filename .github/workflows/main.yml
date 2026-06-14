@@ -64,6 +64,7 @@ jobs:
             --name "${CONTAINER_NAME}-candidate" \
             --env-file .env \
             --network tickin \
+            --log-opt max-size=10m --log-opt max-file=3 \
             "$IMAGE_NAME:new"
 
           echo "=== Wait for healthcheck ==="
@@ -102,6 +103,7 @@ jobs:
             --env-file .env \
             --network tickin \
             -p 4001:4001 \
+            --log-opt max-size=10m --log-opt max-file=3 \
             "$IMAGE_NAME:new"
           docker rm -f "${CONTAINER_NAME}-candidate" || true
 
@@ -111,14 +113,15 @@ jobs:
           echo "=== Logs ==="
           docker logs "$CONTAINER_NAME" --tail 50 || true
 
-          echo "=== Cleanup old images ==="
-          IMAGES=$(docker images "$IMAGE_NAME" --format "{{.ID}}")
-          COUNT=$(echo "$IMAGES" | wc -l)
-          if [ "$COUNT" -gt 1 ]; then
-            echo "$IMAGES" | tail -n +2 | xargs -r docker rmi -f
-          else
-            echo "No old images to clean."
-          fi
+          echo "=== Cleanup old images + build cache (prevents disk fill) ==="
+          # Each build re-tags ":new", so the PREVIOUS image becomes an untagged
+          # (dangling) layer that the old 'docker images <name>' filter never saw —
+          # that's how the disk silently filled to 100% (247 dangling images).
+          # Prune everything not used by a RUNNING container, plus build cache.
+          # This never touches volumes, so the MySQL data is safe.
+          docker image prune -af || true
+          docker builder prune -f || true
+          docker system df || true
           ENDSSH
 
       # =========================
