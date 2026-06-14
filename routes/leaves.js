@@ -6,7 +6,7 @@ const { sendLeaveRequestEmail, sendLeaveStatusEmail } = require('../services/ema
 const { notify, getTeamLeadOf } = require('../services/notifications');
 const { postToSlack } = require('../services/slack');
 const { tenantHas } = require('../services/features');
-const { getTenantToday } = require('../config/business');
+const { getTenantToday, getBusinessConfig } = require('../config/business');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -784,10 +784,12 @@ router.get('/calendar', requireAdmin, async (req, res) => {
     const tDeptOld  = department  ? 'AND employee_id IN (SELECT id FROM employees WHERE department = ?)' : '';
     const tDeptNew  = department  ? 'AND pu.employee_id IN (SELECT id FROM employees WHERE department = ?)' : '';
 
+    // OT past the tenant's configured daily threshold (not a hardcoded 9).
+    const { daily_hours: otThreshold } = await getBusinessConfig(pool);
     const timeQ = `
       SELECT employee_id, DATE(clock_in) as date,
         ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as total_hours,
-        ROUND(GREATEST(0,SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600)-9),2) as ot_hours,
+        ROUND(GREATEST(0,SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600)-?),2) as ot_hours,
         MAX(CASE WHEN clock_out IS NULL THEN clock_in ELSE NULL END) as active_clock_in,
         MAX(CASE WHEN clock_out IS NULL THEN 1 ELSE 0 END) as is_active
       FROM (
@@ -800,7 +802,7 @@ router.get('/calendar', requireAdmin, async (req, res) => {
       ) combined
       GROUP BY employee_id, DATE(clock_in)`;
 
-    const tParams = [];
+    const tParams = [Number(otThreshold) || 9]; // OT threshold for the SELECT
     if (from)        tParams.push(from);
     if (to)          tParams.push(to);
     if (employee_id) tParams.push(employee_id);
@@ -853,15 +855,18 @@ router.get('/employee/calendar', requireEmployee, async (req, res) => {
     if (to)   { holQ += ' AND date <= ?'; hParams.push(to); }
     const [holidays] = await pool.execute(holQ, hParams);
 
-    // Daily worked hours — from portal_time_entries (portal clock-ins)
+    // Daily worked hours — from portal_time_entries (portal clock-ins). OT is
+    // hours past the tenant's configured daily threshold (NOT a hardcoded 9),
+    // matching every other OT path (time.js, reports.js, otReconciliation…).
+    const { daily_hours: otThreshold } = await getBusinessConfig(pool);
     const [dailyHours] = await pool.execute(`
       SELECT DATE(clock_in) as date,
         ROUND(SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600),2) as total_hours,
-        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600) - 9), 2) as ot_hours,
+        ROUND(GREATEST(0, SUM(TIMESTAMPDIFF(SECOND,clock_in,COALESCE(clock_out,NOW()))/3600) - ?), 2) as ot_hours,
         COUNT(*) as sessions
       FROM portal_time_entries WHERE portal_user_id=? AND DATE(clock_in) BETWEEN ? AND ?
       GROUP BY DATE(clock_in)
-    `, [req.employeeId, from || '2000-01-01', to || '2099-12-31']);
+    `, [Number(otThreshold) || 9, req.employeeId, from || '2000-01-01', to || '2099-12-31']);
 
     // Tenant working days (CSV of day keys: mon,tue,…) so the calendar can grey
     // out non-working days per the workspace's actual schedule instead of a
