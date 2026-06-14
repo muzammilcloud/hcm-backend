@@ -538,17 +538,23 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
       }
     }
 
-    // WFH: max 2 per calendar month
+    // WFH: per-month cap from the configured quota (employee override → policy),
+    // not a hardcoded 2. Unlimited policy → no cap.
     if (leave_type === 'Work From Home') {
-      const [wfhThisMonth] = await pool.execute(`
-        SELECT SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date,start_date)+1 ELSE 0.5 END) as used
-        FROM leave_requests
-        WHERE employee_id=? AND leave_type='Work From Home' AND status IN ('pending','approved')
-        AND YEAR(start_date)=YEAR(?) AND MONTH(start_date)=MONTH(?)
-      `, [req.employeeId, start_date, start_date]);
-      const wfhUsed = parseFloat(wfhThisMonth[0]?.used || 0);
-      if (wfhUsed + days > 2) {
-        return res.status(400).json({ error: `WFH limit reached. Max 2 days per month. You have used ${wfhUsed} this month.` });
+      const [wfhPolicy] = await pool.execute("SELECT is_unlimited FROM leave_policies WHERE leave_type='Work From Home' LIMIT 1");
+      const wfhUnlimited = !!wfhPolicy[0]?.is_unlimited;
+      if (!wfhUnlimited) {
+        const wfhCap = (await getEffectiveQuota(pool, req.employeeId, 'Work From Home')) ?? 2;
+        const [wfhThisMonth] = await pool.execute(`
+          SELECT SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date,start_date)+1 ELSE 0.5 END) as used
+          FROM leave_requests
+          WHERE employee_id=? AND leave_type='Work From Home' AND status IN ('pending','approved')
+          AND YEAR(start_date)=YEAR(?) AND MONTH(start_date)=MONTH(?)
+        `, [req.employeeId, start_date, start_date]);
+        const wfhUsed = parseFloat(wfhThisMonth[0]?.used || 0);
+        if (wfhUsed + days > wfhCap) {
+          return res.status(400).json({ error: `WFH limit reached. Max ${wfhCap} day(s) per month. You have used ${wfhUsed} this month.` });
+        }
       }
     }
 
@@ -694,7 +700,12 @@ router.get('/employee/leave-balance', requireEmployee, async (req, res) => {
               AND status IN ('pending','approved') AND YEAR(start_date)=YEAR(NOW()) AND MONTH(start_date)=MONTH(NOW())
             `, [req.employeeId]);
             const used = parseFloat(wfhRows[0]?.used || 0);
-            return { leave_type: p.leave_type, color: p.color, annual_quota: 2, is_unlimited: false, used, remaining: Math.max(0, 2 - used), is_monthly: true };
+            // Honor the configured WFH quota (employee override → policy), not a
+            // hardcoded 2. Unlimited policy → no cap.
+            const wfhQuota = p.is_unlimited
+              ? null
+              : ((await getEffectiveQuota(pool, req.employeeId, 'Work From Home')) ?? p.annual_quota ?? 2);
+            return { leave_type: p.leave_type, color: p.color, annual_quota: wfhQuota, is_unlimited: !!p.is_unlimited, used, remaining: wfhQuota == null ? null : Math.max(0, wfhQuota - used), is_monthly: true };
           }
 
           if (p.leave_type === 'Unpaid Leave') {

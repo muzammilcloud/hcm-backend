@@ -286,9 +286,11 @@ router.get('/teamlead/team/leave-quotas', requireTeamLead, async (req, res) => {
       }
 
       const quotas = policies.map(p => {
-        const quota     = overrideMap[p.leave_type] ?? p.days_per_year;
+        // leave_policies has annual_quota (not days_per_year). Unlimited → no cap.
+        const quota     = p.is_unlimited ? null : (overrideMap[p.leave_type] ?? p.annual_quota);
         const used_days = usedMap[p.leave_type] || 0;
-        return { leave_type: p.leave_type, quota, used_days, remaining: Math.max(0, quota - used_days) };
+        return { leave_type: p.leave_type, quota, is_unlimited: !!p.is_unlimited, used_days,
+                 remaining: quota == null ? null : Math.max(0, quota - used_days) };
       });
 
       return { ...m, quotas };
