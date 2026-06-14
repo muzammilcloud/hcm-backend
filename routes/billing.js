@@ -127,9 +127,12 @@ router.post('/billing/addons', requireAdmin, async (req, res, next) => {
     }
     const addon   = String(req.body?.addon || '');
     const enabled = !!req.body?.enabled;
+    const successUrl = req.body?.successUrl;
     if (!addon) return res.status(400).json({ error: 'addon is required.' });
 
-    const result = await setAddon(tenant, addon, enabled);
+    // Enabling returns a checkout_url (the add-on is its own subscription in
+    // Polar's single-product model); the FE opens it. Disabling cancels it.
+    const result = await setAddon(tenant, addon, enabled, { successUrl });
     res.json({ ...result, pending_sync: !result.no_change });
   } catch (e) { next(e); }
 });
