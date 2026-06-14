@@ -117,6 +117,13 @@ async function sendMonthlySalarySlips() {
 
     const [employees] = await pool.execute('SELECT * FROM employees WHERE is_active = 1');
 
+    // Tenant settings drive the slip's currency / company name / title / signatory.
+    let settings = {};
+    try {
+      const [s] = await pool.execute('SELECT * FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
+      settings = s[0] || {};
+    } catch (_) {}
+
     let sent = 0;
     for (const emp of employees) {
       const [history] = await pool.execute(
@@ -130,7 +137,7 @@ async function sendMonthlySalarySlips() {
       }
 
       try {
-        await sendSalarySlipEmail(emp, history[0], monthLabel);
+        await sendSalarySlipEmail(emp, history[0], monthLabel, settings);
         console.log(`✅ Salary slip sent to ${emp.name} <${emp.email}>`);
         sent++;
       } catch (e) {

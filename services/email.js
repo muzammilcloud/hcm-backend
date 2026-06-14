@@ -217,10 +217,18 @@ async function sendPasswordResetEmail({ name, email, resetToken }) {
   }
 }
 
-async function sendSalarySlipEmail(employee, slip, monthLabel) {
+async function sendSalarySlipEmail(employee, slip, monthLabel, settings = {}) {
+  // Drive currency / company / title / signatory from the tenant settings,
+  // falling back to the legacy Pakistan defaults.
+  const currency  = settings.currency || 'PKR';
+  const companyNm  = settings.company_name || 'Tickin';
+  const slipTitle  = settings.slip_title || 'Salary Slip';
+  const signatory  = settings.slip_signatory_name || 'Anoosha Noor';
   const fmtRs = (n) => {
     const num = parseFloat(n) || 0;
-    return `Rs. ${new Intl.NumberFormat('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(num)}`;
+    try {
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(num);
+    } catch { return `${currency} ${num.toLocaleString()}`; }
   };
 
   const today = new Date();
@@ -240,8 +248,8 @@ async function sendSalarySlipEmail(employee, slip, monthLabel) {
     <!-- Header -->
     <div style="background:#0f172a;padding:24px 28px 0;text-align:center;border-bottom:1px solid #1e293b;">
       <a href="https://tickin.pro" style="color:#3b82f6;font-size:14px;font-weight:700;text-decoration:none;">tickin.pro</a>
-      <h1 style="margin:10px 0 4px;color:#f1f5f9;font-size:22px;font-weight:800;">Tickin</h1>
-      <p style="margin:0 0 0;color:#94a3b8;font-size:14px;font-weight:600;">Salary Slip</p>
+      <h1 style="margin:10px 0 4px;color:#f1f5f9;font-size:22px;font-weight:800;">${companyNm}</h1>
+      <p style="margin:0 0 0;color:#94a3b8;font-size:14px;font-weight:600;">${slipTitle}</p>
     </div>
 
     <!-- Month row -->
@@ -304,13 +312,13 @@ async function sendSalarySlipEmail(employee, slip, monthLabel) {
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">Basic</td>
               <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">${fmtRs(slip.basic_salary)}</td>
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">Leaves</td>
-              <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">Rs.0</td>
+              <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">${fmtRs(0)}</td>
             </tr>
             <tr>
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;font-style:italic;">Allowances</td>
               <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;"></td>
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">Advance</td>
-              <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">Rs.0</td>
+              <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">${fmtRs(0)}</td>
             </tr>
             <tr>
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">House Rent</td>
@@ -322,7 +330,7 @@ async function sendSalarySlipEmail(employee, slip, monthLabel) {
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">Conveyance</td>
               <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">${fmtRs(slip.conveyance)}</td>
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">EOBI</td>
-              <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">Rs.0</td>
+              <td style="padding:7px 12px;border:1px solid #334155;color:#f1f5f9;font-size:12px;text-align:right;">${fmtRs(0)}</td>
             </tr>
             <tr>
               <td style="padding:7px 12px;border:1px solid #334155;color:#94a3b8;font-size:12px;">Medical</td>
@@ -360,7 +368,7 @@ async function sendSalarySlipEmail(employee, slip, monthLabel) {
           <td style="padding:12px 0 4px;color:#64748b;font-size:11px;font-weight:700;text-transform:uppercase;">Received By</td>
         </tr>
         <tr>
-          <td style="padding:4px 0 0;color:#f1f5f9;font-size:13px;font-weight:600;">Anoosha Noor</td>
+          <td style="padding:4px 0 0;color:#f1f5f9;font-size:13px;font-weight:600;">${signatory}</td>
           <td style="padding:4px 0 0;color:#f1f5f9;font-size:13px;font-weight:600;">${employee.name}</td>
         </tr>
       </table>
