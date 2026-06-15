@@ -148,9 +148,9 @@ router.post('/portal-users', requireAdmin, async (req, res) => {
       after: { email, name: displayName, portal_role: pRole, department: department || 'General' },
     });
 
-    // Return the sanitized row, then re-attach the freshly-generated invite
-    // token so the FE can copy/paste the activation link this one time.
-    res.json({ ...sanitizePortalUser(rows[0]), email_sent: emailSent, invite_token: inviteToken });
+    // Return the sanitized row + the freshly-generated invite link so the FE can
+    // copy/paste the activation link (essential when email delivery fails).
+    res.json({ ...sanitizePortalUser(rows[0]), email_sent: emailSent, invite_token: inviteToken, invite_url: inviteUrl });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -200,7 +200,7 @@ router.post('/portal-users/:id/resend', requireAdmin, async (req, res) => {
       name: pu.name, email: pu.email, inviteToken, inviteUrl,
       companyName: req.tenant?.company_name,
     });
-    res.json({ success: true, email_sent: emailSent });
+    res.json({ success: true, email_sent: emailSent, invite_token: inviteToken, invite_url: inviteUrl });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
