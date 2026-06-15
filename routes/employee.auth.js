@@ -38,8 +38,8 @@ router.post('/invite/:token/set-password', async (req, res) => {
     await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'portal_activated', detail: 'Portal account activated' });
 
     const token     = generateToken();
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ? AND expires_at < NOW()', [pu.id]);
     await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
 
     const portalRole = pu.portal_role || 'employee';
@@ -70,8 +70,8 @@ router.post('/employee/login', async (req, res, next) => {
 
     const portalRole = pu.portal_role || 'employee';
     const token      = generateToken();
-    const expiresAt  = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    const expiresAt  = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ? AND expires_at < NOW()', [pu.id]);
     await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
 
     res.json({ token, expires_at: expiresAt, role: portalRole, employee: { id: pu.id, name: pu.name, email: pu.email, role: pu.role, department: pu.department, portal_role: portalRole } });

@@ -26,8 +26,8 @@ router.post('/login/unified', async (req, res, next) => {
         }
         const portalRole = pu.portal_role || 'employee';
         const token      = generateToken();
-        const expiresAt  = new Date(Date.now() + 8 * 60 * 60 * 1000);
-        await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+        const expiresAt  = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ? AND expires_at < NOW()', [pu.id]);
         await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
         return res.json({
           token, expires_at: expiresAt,
@@ -42,7 +42,7 @@ router.post('/login/unified', async (req, res, next) => {
     const envPass = (process.env.ADMIN_PASSWORD || 'admin123').trim();
     if (email === envUser && password === envPass) {
       const token     = generateToken();
-      const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       await pool.execute('INSERT INTO admin_sessions (admin_id, token, expires_at) VALUES (1, ?, ?)', [token, expiresAt]);
       return res.json({ token, username: envUser, expires_at: expiresAt, role: 'admin' });
     }
@@ -63,7 +63,7 @@ router.post('/login', async (req, res, next) => {
     }
     const pool = await getDB();
     const token = generateToken();
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     await pool.execute(
       'INSERT INTO admin_sessions (admin_id, token, expires_at) VALUES (1, ?, ?)',
       [token, expiresAt]
