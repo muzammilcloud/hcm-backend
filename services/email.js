@@ -1,5 +1,14 @@
 const nodemailer = require('nodemailer');
-const { getIntegrationConfig } = require('./integrations');
+const { getIntegrationConfig, recordTestResult } = require('./integrations');
+
+// When a tenant is sending through THEIR OWN SMTP, record the outcome so their
+// dashboard can warn the sysadmin if it's failing. No-op for the platform
+// fallback (a platform issue isn't the tenant's SMTP to fix) and outside tenant
+// context. Never throws.
+async function recordTenantSmtpOutcome(cfg, ok, message) {
+  if (!cfg || cfg.source !== 'tenant') return;
+  try { await recordTestResult('smtp', ok, ok ? 'Last send delivered' : message); } catch (_) {}
+}
 
 // Build a transporter from the current tenant's SMTP config (with env fallback).
 // Recreated per call — nodemailer's pool overhead is negligible at our send rate
@@ -35,10 +44,18 @@ const transporter = new Proxy({}, {
   get(_, prop) {
     if (prop === 'sendMail') {
       return async (opts) => {
+        const cfg = await getIntegrationConfig('smtp');
         const t = await getTransporter();
         // If caller didn't set a from, fill it from tenant config
         if (!opts.from) opts.from = await getFromAddress();
-        return t.sendMail(opts);
+        try {
+          const r = await t.sendMail(opts);
+          await recordTenantSmtpOutcome(cfg, true);
+          return r;
+        } catch (e) {
+          await recordTenantSmtpOutcome(cfg, false, e.message);
+          throw e;
+        }
       };
     }
     return undefined;

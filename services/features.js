@@ -23,6 +23,9 @@ const STARTER_FEATURES = new Set([
   'salary_slips',           // monthly PDF generation + email delivery
   'weekly_reports',         // weekly email digest
   'email_support',          // org-level commitment, never code-gated
+  'smtp_integration',       // bring-your-own SMTP — available on every plan; only
+                            // affects HOW the plan's own emails are delivered, not
+                            // WHICH emails are sent (those stay feature-gated).
 ]);
 
 // Growth — everything Starter has plus the larger feature set.
@@ -40,7 +43,6 @@ const GROWTH_FEATURES = new Set([
   'team_lead_role',               // two-stage approval (TL → Admin)
   'monthly_reports',              // monthly email digest in addition to weekly
   'csv_exports',                  // CSV downloads in Employees, Salary, Reports
-  'smtp_integration',             // bring-your-own Gmail/SMTP for sends
   'audit_log',                    // append-only audit log access
 ]);
 
@@ -61,6 +63,7 @@ const FEATURE_MIN_PLAN = {
   salary_slips:        'starter',
   weekly_reports:      'starter',
   email_support:       'starter',
+  smtp_integration:    'starter',   // bring-your-own SMTP available on every plan
   // Growth-tier features
   overtime_detection:         'growth',
   monthly_reconciliation:     'growth',
@@ -69,7 +72,6 @@ const FEATURE_MIN_PLAN = {
   team_lead_role:             'growth',
   monthly_reports:            'growth',
   csv_exports:                'growth',
-  smtp_integration:           'growth',
   audit_log:                  'growth',
 };
 
