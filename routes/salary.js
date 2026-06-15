@@ -4,6 +4,27 @@ const { getDB } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { calculateSalaryBreakdown } = require('../services/salary');
 
+// Load the tenant's configured income-tax brackets for calculateSalaryBreakdown:
+//   non-empty array → use them; [] → tax disabled (0); null → none configured
+//   (legacy PK fallback). Mirrors the tenant-aware slip engine (salaryCalc.js).
+async function loadTaxBrackets(pool) {
+  try {
+    const [brackets] = await pool.execute(
+      'SELECT band_from, band_to, rate FROM tax_brackets ORDER BY sort_order ASC, band_from ASC'
+    );
+    let taxEnabled = true;
+    try {
+      const [meta] = await pool.execute('SELECT tax_enabled FROM tax_bracket_meta WHERE singleton_key = 1 LIMIT 1');
+      if (meta.length && meta[0].tax_enabled != null) taxEnabled = !!meta[0].tax_enabled;
+    } catch (_) {}
+    if (!taxEnabled) return [];               // explicitly disabled → 0 tax
+    if (brackets.length) return brackets;     // configured → use them
+    return null;                              // none configured → legacy fallback
+  } catch (_) {
+    return null;                              // no tax tables → legacy fallback
+  }
+}
+
 // GET /api/salaries — Admin: every employee in the workspace.
 // Includes employees who haven't activated their portal account yet
 // (is_active=0) so admins can pre-configure salary at hire time. The
@@ -76,7 +97,8 @@ router.get('/employee/salary/current', requireEmployee, async (req, res) => {
     const daysInMonth = 30;
     const daysWorked = now.getDate();
 
-    const breakdown = calculateSalaryBreakdown(salary[0], daysInMonth, daysWorked);
+    const taxBrackets = await loadTaxBrackets(pool);
+    const breakdown = calculateSalaryBreakdown(salary[0], daysInMonth, daysWorked, taxBrackets);
 
     res.json({
       ...salary[0],
@@ -116,7 +138,8 @@ router.post('/salaries/:employeeId/generate/:month', requireAdmin, async (req, r
       return res.status(404).json({ error: 'Salary not configured for this employee' });
     }
 
-    const breakdown = calculateSalaryBreakdown(salary[0], 30, days_worked);
+    const taxBrackets = await loadTaxBrackets(pool);
+    const breakdown = calculateSalaryBreakdown(salary[0], 30, days_worked, taxBrackets);
     const data = breakdown.proRata;
 
     await pool.execute(`

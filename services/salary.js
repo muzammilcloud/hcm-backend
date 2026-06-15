@@ -1,5 +1,8 @@
+const { calculateTax } = require('./taxModules');
+
 function calculateWithholdingTax(annualSalary) {
-  // Pakistan Withholding Tax 2025-26
+  // Legacy Pakistan Withholding Tax fallback — used ONLY when a tenant has no
+  // tax brackets configured. Configured tenants go through their own brackets.
   if (annualSalary <= 600000) return 0;
   if (annualSalary <= 1200000) return (annualSalary - 600000) * 0.025;
   if (annualSalary <= 2200000) return 6000 + (annualSalary - 1200000) * 0.11;
@@ -8,7 +11,11 @@ function calculateWithholdingTax(annualSalary) {
   return 616000 + (annualSalary - 4100000) * 0.35;
 }
 
-function calculateSalaryBreakdown(salaryComponents, daysInMonth = 30, daysWorked = 30) {
+// taxBrackets:
+//   non-empty array → use the tenant's configured brackets (via calculateTax),
+//   [] (empty)      → tax explicitly disabled → 0,
+//   null/undefined  → no config available → legacy PK fallback above.
+function calculateSalaryBreakdown(salaryComponents, daysInMonth = 30, daysWorked = 30, taxBrackets = null) {
   const { basic_salary, house_rent, conveyance, medical, utilities } = salaryComponents;
 
   // Monthly totals
@@ -17,7 +24,9 @@ function calculateSalaryBreakdown(salaryComponents, daysInMonth = 30, daysWorked
 
   // Annual for tax calculation
   const annualGross = grossMonthly * 12;
-  const annualTax = calculateWithholdingTax(annualGross);
+  const annualTax = Array.isArray(taxBrackets)
+    ? calculateTax(annualGross, taxBrackets)   // configured brackets ([] → 0)
+    : calculateWithholdingTax(annualGross);    // legacy PK fallback
   const monthlyTax = annualTax / 12;
 
   // Monthly deductions
