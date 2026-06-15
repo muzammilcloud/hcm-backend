@@ -67,7 +67,10 @@ router.post('/platform/login', async (req, res, next) => {
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token     = generateToken();
-    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12h
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    // Prune this admin's already-expired sessions (housekeeping); does NOT touch
+    // active ones, so the console stays logged in across devices/tabs.
+    try { await db.execute('DELETE FROM platform_sessions WHERE platform_admin_id = ? AND expires_at < NOW()', [admin.id]); } catch (_) {}
     await db.execute(
       'INSERT INTO platform_sessions (platform_admin_id, token, expires_at) VALUES (?, ?, ?)',
       [admin.id, token, expiresAt]
