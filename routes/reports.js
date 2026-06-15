@@ -273,4 +273,19 @@ router.get('/employee/overtime', requireEmployee, requireFeature('overtime_detec
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/employee/work-config — inputs the OT/summary views need to compute the
+// monthly required-hours target (daily hours × working days, or the override),
+// instead of a hardcoded 180h.
+router.get('/employee/work-config', requireEmployee, async (req, res) => {
+  try {
+    const pool = await getDB();
+    const { daily_hours, working_days, monthly_override } = await getBusinessConfig(pool);
+    res.json({
+      daily_hours: Number(daily_hours) || 9,
+      working_days: Array.from(working_days || []),       // e.g. ["mon","tue",…]
+      monthly_required_hours_override: monthly_override,   // null = compute from above
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
