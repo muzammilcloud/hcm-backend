@@ -125,7 +125,7 @@ async function sendLeaveRequestEmail({ employeeName, department, leaveType, star
       </div>
     </div></body>`;
   try {
-    await transporter.sendMail({ from:`"Tickin" <${process.env.SMTP_USER}>`, to:adminEmail, subject:`🏖 Leave Request — ${employeeName} (${leaveType})`, html });
+    await transporter.sendMail({ from:await getFromAddress(), to:adminEmail, subject:`🏖 Leave Request — ${employeeName} (${leaveType})`, html });
   } catch(e) { console.error('Leave request email failed:', e.message); }
 }
 
@@ -149,7 +149,7 @@ async function sendLeaveStatusEmail({ employeeEmail, employeeName, status, leave
       </div>
     </div></body>`;
   try {
-    await transporter.sendMail({ from:`"Tickin" <${process.env.SMTP_USER}>`, to:employeeEmail, subject:`${icon} Your leave request has been ${status}`, html });
+    await transporter.sendMail({ from:await getFromAddress(), to:employeeEmail, subject:`${icon} Your leave request has been ${status}`, html });
   } catch(e) { console.error('Leave status email failed:', e.message); }
 }
 
@@ -171,7 +171,7 @@ async function sendReportEmail({ to, subject, title, subtitle, rows, columns }) 
       </div>
     </div></body>`;
   try {
-    await transporter.sendMail({ from:`"Tickin" <${process.env.SMTP_USER}>`, to, subject, html });
+    await transporter.sendMail({ from:await getFromAddress(), to, subject, html });
   } catch(e) { console.error(`Report email to ${to} failed:`, e.message); }
 }
 
@@ -210,7 +210,7 @@ async function sendPasswordResetEmail({ name, email, resetToken }) {
   `;
   try {
     await transporter.sendMail({
-      from:    `"Tickin" <${process.env.SMTP_USER}>`,
+      from:    await getFromAddress(),
       to:      email,
       subject: '🔑 Reset Your Password — Tickin',
       html,
@@ -388,7 +388,7 @@ async function sendSalarySlipEmail(employee, slip, monthLabel, settings = {}) {
   </body>`;
 
   await transporter.sendMail({
-    from: `"Tickin" <${process.env.SMTP_USER}>`,
+    from: await getFromAddress(),
     to: employee.email,
     subject: `Salary Slip — ${monthLabel}`,
     html,
@@ -429,7 +429,7 @@ async function sendBirthdayReminderEmail({ adminEmail, employees }) {
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Tickin" <${process.env.SMTP_USER}>`,
+      from:    await getFromAddress(),
       to:      adminEmail,
       subject: `🎂 Birthday Reminder: ${employees.length} birthday${employees.length > 1 ? 's' : ''} tomorrow`,
       html,
@@ -461,7 +461,7 @@ async function sendBirthdayGreetingEmail({ name, email }) {
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Tickin" <${process.env.SMTP_USER}>`,
+      from:    await getFromAddress(),
       to:      email,
       subject: `🎂 Happy Birthday, ${name}! 🎉`,
       html,
@@ -504,7 +504,7 @@ async function sendAnniversaryReminderEmail({ adminEmail, employees }) {
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Tickin" <${process.env.SMTP_USER}>`,
+      from:    await getFromAddress(),
       to:      adminEmail,
       subject: `🏆 Work Anniversary Reminder: ${employees.length} anniversary${employees.length > 1 ? 's' : ''} tomorrow`,
       html,
@@ -538,7 +538,7 @@ async function sendAnniversaryGreetingEmail({ name, email, years }) {
     </div></body>`;
   try {
     await transporter.sendMail({
-      from:    `"Tickin" <${process.env.SMTP_USER}>`,
+      from:    await getFromAddress(),
       to:      email,
       subject: `🏆 Happy ${ordinal} Work Anniversary, ${name}! 🎉`,
       html,
