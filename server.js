@@ -155,10 +155,27 @@ const PORT = process.env.PORT || 4000;
 // Why this matters: migrate-then-listen blocked /health until all tenants
 // finished, so once the tenant count grew the healthcheck timed out and EVERY
 // deploy failed. Listen-first keeps deploys fast + reliable regardless of scale.
-initPlatformDB()
+// Retry the platform DB connection at startup instead of dying on the first
+// hiccup. MySQL can be briefly unreachable during a deploy or its own restart;
+// without this the API exits (1), the container has no replacement, and prod
+// goes down — exactly the outage we just had (ECONNREFUSED …:3306).
+async function initPlatformDBWithRetry(attempts = 30, delayMs = 3000) {
+  for (let i = 1; i <= attempts; i++) {
+    try { await initPlatformDB(); return; }
+    catch (e) {
+      console.error(`[startup] platform DB not ready (attempt ${i}/${attempts}): ${e.message}`);
+      if (i === attempts) throw e;
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+}
+
+initPlatformDBWithRetry()
   .then(() => {
-    scheduleReports();
-    startOTChecker();
+    // Schedulers must NEVER crash startup — isolate them so a throw here can't
+    // take the whole process down (exit 1) and leave prod with no container.
+    try { scheduleReports(); } catch (e) { console.error('[startup] scheduleReports failed:', e.message); }
+    try { startOTChecker(); }  catch (e) { console.error('[startup] startOTChecker failed:', e.message); }
     app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
     // Fire-and-forget; sequential inside, errors isolated per tenant.
     migrateAllTenants()
@@ -166,6 +183,8 @@ initPlatformDB()
       .catch(err => console.error('[migrations] background migration error:', err.message));
   })
   .catch(err => {
-    console.error('❌ Failed to initialize platform DB:', err.message);
+    // Only a genuinely fatal platform-DB failure should exit. Even then, log
+    // loudly so the deploy/candidate logs make the cause obvious.
+    console.error('❌ Fatal: platform DB init failed:', err.message);
     process.exit(1);
   });

@@ -3,6 +3,14 @@ on:
   push:
     branches: [main]
 
+# Only ONE deploy may run at a time. Without this, several quick pushes triggered
+# parallel deploys that raced on the same server (building, pruning, and swapping
+# the prod container simultaneously) and left it down. Queue them; never cancel a
+# deploy mid-flight (that could stop prod without starting the replacement).
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Deploying to Production Server
@@ -72,6 +80,7 @@ jobs:
           echo "=== Start candidate container (no traffic) ==="
           docker run -d \
             --name "${CONTAINER_NAME}-candidate" \
+            --restart unless-stopped \
             --env-file .env \
             --network tickin \
             --log-opt max-size=10m --log-opt max-file=3 \
@@ -110,6 +119,7 @@ jobs:
           docker rm   "$CONTAINER_NAME" || true
           docker run -d \
             --name "$CONTAINER_NAME" \
+            --restart unless-stopped \
             --env-file .env \
             --network tickin \
             -p 4001:4001 \
