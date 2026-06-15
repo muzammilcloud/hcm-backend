@@ -108,6 +108,35 @@ async function getTenantToday(pool) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 }
 
+// Chargeable leave days for a single request. Half-day = 0.5. Full-day = the
+// number of WORKING days (per tenant working_days) in [start,end] that are NOT
+// public holidays — so a range spanning a weekend/holiday doesn't over-charge.
+function countLeaveDays(startStr, endStr, duration, workingDaySet, holidaySet) {
+  if (duration && duration !== 'full') return 0.5;
+  const start = new Date(String(startStr).slice(0, 10) + 'T00:00:00');
+  const end   = new Date(String(endStr).slice(0, 10)   + 'T00:00:00');
+  if (isNaN(start) || isNaN(end) || end < start) return 0;
+  let n = 0;
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const key = DAY_KEYS[d.getDay()];
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (workingDaySet.has(key) && !(holidaySet && holidaySet.has(iso))) n++;
+  }
+  return n;
+}
+
+// Load the inputs countLeaveDays needs: the tenant working-day set + the set of
+// public-holiday dates (YYYY-MM-DD) for the current tenant.
+async function getLeaveCalc(pool) {
+  const { working_days } = await getBusinessConfig(pool);
+  let holidaySet = new Set();
+  try {
+    const [hrows] = await pool.execute(`SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d FROM public_holidays`);
+    holidaySet = new Set(hrows.map(r => r.d));
+  } catch (_) {}
+  return { workingDaySet: working_days, holidaySet };
+}
+
 // Current leave-year window based on the joining anniversary (shared by the
 // employee balance, admin quota table, and team-lead quota table so all three
 // agree). Returns { start, end } as YYYY-MM-DD.
@@ -137,4 +166,6 @@ module.exports = {
   workingDaysInMonth,
   monthlyRequiredHours,
   getLeaveYearRange,
+  countLeaveDays,
+  getLeaveCalc,
 };

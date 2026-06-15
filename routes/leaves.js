@@ -6,7 +6,7 @@ const { sendLeaveRequestEmail, sendLeaveStatusEmail } = require('../services/ema
 const { notify, getTeamLeadOf } = require('../services/notifications');
 const { postToSlack } = require('../services/slack');
 const { tenantHas } = require('../services/features');
-const { getTenantToday, getBusinessConfig, getLeaveYearRange } = require('../config/business');
+const { getTenantToday, getBusinessConfig, getLeaveYearRange, countLeaveDays, getLeaveCalc } = require('../config/business');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -16,19 +16,12 @@ function buildLeaveSlackBlocks(lr, requesterName, department) {
   return [{ type: 'section', text: { type: 'mrkdwn', text } }];
 }
 
-// Helper: count used leave days within a date range (anniversary-based leave year)
+// Helper: count used leave days within a date range (anniversary-based leave year).
+// Counts working days only, excluding public holidays (via countLeaveDays).
 async function getUsedLeaveDays(pool, employeeId, leaveType, yearStart = null, yearEnd = null) {
-  let q = `
-    SELECT SUM(
-      CASE duration
-        WHEN 'full'    THEN DATEDIFF(end_date, start_date) + 1
-        WHEN 'half_am' THEN 0.5
-        WHEN 'half_pm' THEN 0.5
-      END
-    ) as used
-    FROM leave_requests
-    WHERE employee_id=? AND leave_type=? AND status='approved'
-  `;
+  let q = `SELECT DATE_FORMAT(start_date,'%Y-%m-%d') AS s, DATE_FORMAT(end_date,'%Y-%m-%d') AS e, duration
+           FROM leave_requests
+           WHERE employee_id=? AND leave_type=? AND status='approved'`;
   const params = [employeeId, leaveType];
   if (yearStart && yearEnd) {
     q += ' AND start_date >= ? AND start_date <= ?';
@@ -37,7 +30,8 @@ async function getUsedLeaveDays(pool, employeeId, leaveType, yearStart = null, y
     q += ' AND YEAR(start_date) = YEAR(NOW())';
   }
   const [rows] = await pool.execute(q, params);
-  return parseFloat(rows[0].used || 0);
+  const { workingDaySet, holidaySet } = await getLeaveCalc(pool);
+  return rows.reduce((sum, r) => sum + countLeaveDays(r.s, r.e, r.duration, workingDaySet, holidaySet), 0);
 }
 
 // getLeaveYearRange is shared from config/business.js (used by the balance,
@@ -173,6 +167,9 @@ router.get('/leave-quotas', requireAdmin, async (req, res) => {
       p => p.leave_type !== 'Public Holiday' && p.leave_type !== 'Unpaid Leave'
     );
 
+    // Working-day + holiday calendar, loaded once for the whole table.
+    const { workingDaySet, holidaySet } = await getLeaveCalc(pool);
+
     const result = await Promise.all(members.map(async (m) => {
       // Count used days within the employee's anniversary leave-year (matches the
       // employee's own balance), not a calendar year.
@@ -180,15 +177,17 @@ router.get('/leave-quotas', requireAdmin, async (req, res) => {
       const { start: lyStart, end: lyEnd } = jd
         ? getLeaveYearRange(jd)
         : { start: `${year}-01-01`, end: `${year}-12-31` };
-      const [used] = await pool.execute(
-        `SELECT leave_type,
-                SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date, start_date) + 1 ELSE 0.5 END) AS days_used
+      // Working days only, excluding holidays (consistent with the employee balance).
+      const [usedRows] = await pool.execute(
+        `SELECT leave_type, DATE_FORMAT(start_date,'%Y-%m-%d') AS s, DATE_FORMAT(end_date,'%Y-%m-%d') AS e, duration
          FROM leave_requests
-         WHERE employee_id = ? AND status = 'approved' AND start_date BETWEEN ? AND ?
-         GROUP BY leave_type`,
+         WHERE employee_id = ? AND status = 'approved' AND start_date BETWEEN ? AND ?`,
         [m.portal_user_id, lyStart, lyEnd]
       );
-      const usedMap = Object.fromEntries(used.map(r => [r.leave_type, parseFloat(r.days_used)]));
+      const usedMap = {};
+      for (const r of usedRows) {
+        usedMap[r.leave_type] = (usedMap[r.leave_type] || 0) + countLeaveDays(r.s, r.e, r.duration, workingDaySet, holidaySet);
+      }
 
       let overrideMap = {};
       if (m.employee_db_id) {
@@ -304,6 +303,8 @@ router.get('/leave-requests', requireAdmin, async (req, res) => {
     if (date)        { q += ' AND ? BETWEEN lr.start_date AND lr.end_date';  params.push(date); }
     q += ' ORDER BY lr.created_at DESC';
     const [rows] = await pool.execute(q, params);
+    const { workingDaySet, holidaySet } = await getLeaveCalc(pool);
+    rows.forEach(r => { r.chargeable_days = countLeaveDays(r.start_date, r.end_date, r.duration, workingDaySet, holidaySet); });
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -517,11 +518,11 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
       ? getLeaveYearRange(joinDateStr)
       : { start: `${new Date().getFullYear()}-01-01`, end: `${new Date().getFullYear()}-12-31` };
 
-    // Check quota for limited leave types
+    // Check quota for limited leave types. Count working days only (excl. holidays),
+    // so a range spanning a weekend/holiday doesn't over-charge the quota.
     const [policies] = await pool.execute('SELECT * FROM leave_policies WHERE leave_type=?', [leave_type]);
-    const days = duration === 'full'
-      ? (new Date(end_date) - new Date(start_date)) / 86400000 + 1
-      : 0.5;
+    const { workingDaySet: subWD, holidaySet: subHol } = await getLeaveCalc(pool);
+    const days = countLeaveDays(start_date, end_date, duration, subWD, subHol);
 
     if (policies.length > 0 && !policies[0].is_unlimited) {
       const effectiveQuota = await getEffectiveQuota(pool, req.employeeId, leave_type);
@@ -660,6 +661,8 @@ router.get('/employee/leave-requests', requireEmployee, async (req, res) => {
       'SELECT * FROM leave_requests WHERE employee_id=? ORDER BY created_at DESC',
       [req.employeeId]
     );
+    const { workingDaySet, holidaySet } = await getLeaveCalc(pool);
+    rows.forEach(r => { r.chargeable_days = countLeaveDays(r.start_date, r.end_date, r.duration, workingDaySet, holidaySet); });
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

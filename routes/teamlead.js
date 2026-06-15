@@ -5,7 +5,7 @@ const { requireTeamLead } = require('../middleware/auth');
 const { requireFeature } = require('../middleware/features');
 const { sendLeaveStatusEmail } = require('../services/email');
 const { notify } = require('../services/notifications');
-const { getBusinessConfig, getLeaveYearRange } = require('../config/business');
+const { getBusinessConfig, getLeaveYearRange, countLeaveDays, getLeaveCalc } = require('../config/business');
 const { computeForPortalUser } = require('../services/otReconciliation');
 const { sanitizePortalUsers } = require('../services/sanitize');
 
@@ -263,6 +263,9 @@ router.get('/teamlead/team/leave-quotas', requireTeamLead, async (req, res) => {
     // Get leave policies
     const [policies] = await pool.execute('SELECT * FROM leave_policies');
 
+    // Working-day + holiday calendar, loaded once for the whole table.
+    const { workingDaySet, holidaySet } = await getLeaveCalc(pool);
+
     const result = await Promise.all(members.map(async (m) => {
       // Count used days within the employee's anniversary leave-year (matches the
       // employee's own balance + the admin quota table), not a calendar year.
@@ -270,16 +273,17 @@ router.get('/teamlead/team/leave-quotas', requireTeamLead, async (req, res) => {
       const { start: lyStart, end: lyEnd } = jd
         ? getLeaveYearRange(jd)
         : { start: `${year}-01-01`, end: `${year}-12-31` };
-      // Used days per leave type (leave_requests.employee_id = portal_users.id)
-      const [used] = await pool.execute(
-        `SELECT leave_type,
-                SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date, start_date) + 1 ELSE 0.5 END) AS days_used
+      // Used days per leave type — working days only, excluding holidays.
+      const [usedRows] = await pool.execute(
+        `SELECT leave_type, DATE_FORMAT(start_date,'%Y-%m-%d') AS s, DATE_FORMAT(end_date,'%Y-%m-%d') AS e, duration
          FROM leave_requests
-         WHERE employee_id = ? AND status = 'approved' AND start_date BETWEEN ? AND ?
-         GROUP BY leave_type`,
+         WHERE employee_id = ? AND status = 'approved' AND start_date BETWEEN ? AND ?`,
         [m.portal_user_id, lyStart, lyEnd]
       );
-      const usedMap = Object.fromEntries(used.map(r => [r.leave_type, parseFloat(r.days_used)]));
+      const usedMap = {};
+      for (const r of usedRows) {
+        usedMap[r.leave_type] = (usedMap[r.leave_type] || 0) + countLeaveDays(r.s, r.e, r.duration, workingDaySet, holidaySet);
+      }
 
       // Quota overrides — employee_quota_overrides.employee_id references employees.id
       let overrideMap = {};
