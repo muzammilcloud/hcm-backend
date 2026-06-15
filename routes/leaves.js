@@ -6,7 +6,7 @@ const { sendLeaveRequestEmail, sendLeaveStatusEmail } = require('../services/ema
 const { notify, getTeamLeadOf } = require('../services/notifications');
 const { postToSlack } = require('../services/slack');
 const { tenantHas } = require('../services/features');
-const { getTenantToday, getBusinessConfig } = require('../config/business');
+const { getTenantToday, getBusinessConfig, getLeaveYearRange } = require('../config/business');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -40,17 +40,8 @@ async function getUsedLeaveDays(pool, employeeId, leaveType, yearStart = null, y
   return parseFloat(rows[0].used || 0);
 }
 
-// Helper: get the current leave year range based on joining anniversary
-function getLeaveYearRange(joinDateStr) {
-  const join = new Date(joinDateStr + 'T00:00:00');
-  const today = new Date();
-  let yr = today.getFullYear();
-  let start = new Date(yr, join.getMonth(), join.getDate());
-  if (start > today) { yr--; start = new Date(yr, join.getMonth(), join.getDate()); }
-  const end = new Date(yr + 1, join.getMonth(), join.getDate());
-  end.setDate(end.getDate() - 1);
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
-}
+// getLeaveYearRange is shared from config/business.js (used by the balance,
+// admin quota, and team-lead quota so all three agree on the anniversary window).
 
 // Helper: determine which leave types an employee is eligible for
 function getEligibleLeaveTypes(emp) {
@@ -170,7 +161,7 @@ router.get('/leave-quotas', requireAdmin, async (req, res) => {
     const year = req.query.year || new Date().getFullYear();
 
     const [members] = await pool.execute(
-      `SELECT pu.id AS portal_user_id, pu.name, pu.department, e.id AS employee_db_id, e.emp_code
+      `SELECT pu.id AS portal_user_id, pu.name, pu.department, e.id AS employee_db_id, e.emp_code, e.join_date
        FROM portal_users pu
        JOIN employees e ON pu.employee_id = e.id
        WHERE pu.status = 'active'
@@ -183,13 +174,19 @@ router.get('/leave-quotas', requireAdmin, async (req, res) => {
     );
 
     const result = await Promise.all(members.map(async (m) => {
+      // Count used days within the employee's anniversary leave-year (matches the
+      // employee's own balance), not a calendar year.
+      const jd = m.join_date ? m.join_date.toString().slice(0, 10) : null;
+      const { start: lyStart, end: lyEnd } = jd
+        ? getLeaveYearRange(jd)
+        : { start: `${year}-01-01`, end: `${year}-12-31` };
       const [used] = await pool.execute(
         `SELECT leave_type,
                 SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date, start_date) + 1 ELSE 0.5 END) AS days_used
          FROM leave_requests
-         WHERE employee_id = ? AND status = 'approved' AND YEAR(start_date) = ?
+         WHERE employee_id = ? AND status = 'approved' AND start_date BETWEEN ? AND ?
          GROUP BY leave_type`,
-        [m.portal_user_id, year]
+        [m.portal_user_id, lyStart, lyEnd]
       );
       const usedMap = Object.fromEntries(used.map(r => [r.leave_type, parseFloat(r.days_used)]));
 
@@ -689,6 +686,11 @@ router.get('/employee/leave-balance', requireEmployee, async (req, res) => {
 
     const [policies] = await pool.execute('SELECT * FROM leave_policies');
 
+    // WFH is a per-month cap, counted in the TENANT's timezone (not server NOW()).
+    const tToday = await getTenantToday(pool); // YYYY-MM-DD
+    const tYear  = Number(tToday.slice(0, 4));
+    const tMonth = Number(tToday.slice(5, 7));
+
     const balance = await Promise.all(
       policies
         .filter(p => eligibleTypes.has(p.leave_type))
@@ -697,8 +699,8 @@ router.get('/employee/leave-balance', requireEmployee, async (req, res) => {
             const [wfhRows] = await pool.execute(`
               SELECT SUM(CASE duration WHEN 'full' THEN DATEDIFF(end_date,start_date)+1 ELSE 0.5 END) as used
               FROM leave_requests WHERE employee_id=? AND leave_type='Work From Home'
-              AND status IN ('pending','approved') AND YEAR(start_date)=YEAR(NOW()) AND MONTH(start_date)=MONTH(NOW())
-            `, [req.employeeId]);
+              AND status IN ('pending','approved') AND YEAR(start_date)=? AND MONTH(start_date)=?
+            `, [req.employeeId, tYear, tMonth]);
             const used = parseFloat(wfhRows[0]?.used || 0);
             // Honor the configured WFH quota (employee override → policy), not a
             // hardcoded 2. Unlimited policy → no cap.

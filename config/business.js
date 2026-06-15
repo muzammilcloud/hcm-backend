@@ -108,6 +108,20 @@ async function getTenantToday(pool) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 }
 
+// Current leave-year window based on the joining anniversary (shared by the
+// employee balance, admin quota table, and team-lead quota table so all three
+// agree). Returns { start, end } as YYYY-MM-DD.
+function getLeaveYearRange(joinDateStr) {
+  const join = new Date(joinDateStr + 'T00:00:00');
+  const today = new Date();
+  let yr = today.getFullYear();
+  let start = new Date(yr, join.getMonth(), join.getDate());
+  if (start > today) { yr--; start = new Date(yr, join.getMonth(), join.getDate()); }
+  const end = new Date(yr + 1, join.getMonth(), join.getDate());
+  end.setDate(end.getDate() - 1);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
 module.exports = {
   OT_THRESHOLD_HOURS,
   OT_THRESHOLD_MS,
@@ -122,4 +136,5 @@ module.exports = {
   parseWorkingDays,
   workingDaysInMonth,
   monthlyRequiredHours,
+  getLeaveYearRange,
 };

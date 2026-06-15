@@ -324,13 +324,28 @@ router.put('/attendance-adjustments/:id', requireAdmin, async (req, res) => {
           await recalcOT(pool, adj.time_entry_id, adj.portal_user_id);
         }
       } else if (adj.type === 'missing') {
+        // Default the clock-in to the employee's assigned shift start_time (not a
+        // hardcoded 09:00) when the request didn't specify one.
+        let defaultClockIn = `${adj.requested_date} 09:00:00`;
+        try {
+          const [pu] = await pool.execute('SELECT department FROM portal_users WHERE id=?', [adj.portal_user_id]);
+          const dept = pu[0]?.department || null;
+          const [sh] = await pool.execute(
+            `SELECT start_time FROM shifts
+               WHERE is_active=1 AND ((scope='employee' AND scope_id=?) OR (scope='department' AND scope_id=?))
+             ORDER BY (scope='employee') DESC LIMIT 1`,
+            [String(adj.portal_user_id), dept]
+          );
+          if (sh[0]?.start_time) defaultClockIn = `${adj.requested_date} ${sh[0].start_time}`;
+        } catch (_) {}
+
         // Create new entry
         const [ins] = await pool.execute(
           `INSERT INTO portal_time_entries (portal_user_id, clock_in, clock_out, notes)
            VALUES (?,?,?,?)`,
           [
             adj.portal_user_id,
-            adj.requested_clock_in  ? toMySQL(adj.requested_clock_in)  : `${adj.requested_date} 09:00:00`,
+            adj.requested_clock_in  ? toMySQL(adj.requested_clock_in)  : defaultClockIn,
             adj.requested_clock_out ? toMySQL(adj.requested_clock_out) : null,
             'Created via attendance adjustment request',
           ]
