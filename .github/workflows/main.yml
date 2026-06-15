@@ -49,6 +49,16 @@ jobs:
 
           cd "$DEPLOY_PATH"
 
+          echo "=== Reclaim disk BEFORE build (prevents repeat 'no space left' failures) ==="
+          # A failed deploy leaves an orphaned build image; the end-of-run cleanup
+          # only fires on success, so failures used to compound until the disk hit
+          # 100%. Prune dangling images + stopped containers + build cache up front.
+          # -f (no -a) keeps the RUNNING prod + mysql images and never touches volumes.
+          docker container prune -f || true
+          docker image prune -f     || true
+          docker builder prune -f   || true
+          df -h / || true
+
           echo "=== Pull latest code ==="
           git fetch origin main
           git reset --hard origin/main

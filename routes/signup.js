@@ -100,18 +100,36 @@ router.post('/signup', async (req, res, next) => {
       action: 'tenant.signup', detail: { slug: finalSlug, email }, ip,
     });
 
-    // Fire invite email
-    sendInviteEmail({
-      to: email,
-      name: adminName,
-      inviteUrl: result.setPasswordUrl,
-      companyName: company,
-    }).catch((e) => console.error('[invite email] failed:', e.message));
+    // Send the invite email, but DON'T let email delivery gate access. We bound
+    // the wait so a slow/broken SMTP can't hang signup, and we record the result
+    // for visibility. Crucially, the set-password URL is returned to the client
+    // below so the user can finish onboarding even if the email never arrives.
+    let emailSent = null;
+    try {
+      emailSent = await Promise.race([
+        // sendInviteEmail RESOLVES with true/false (it catches internally), so use
+        // its return value — don't assume success just because it didn't throw.
+        sendInviteEmail({ to: email, name: adminName, inviteUrl: result.setPasswordUrl, companyName: company })
+          .then((ok) => ok === true)
+          .catch((e) => { console.error('[invite email] failed:', e.message); return false; }),
+        new Promise((r) => setTimeout(() => r(null), 4000)),
+      ]);
+    } catch (_) { emailSent = false; }
+    if (emailSent === false) {
+      console.error(`[signup] invite email FAILED for ${email} (tenant ${result.slug}) — check platform SMTP env`);
+      try {
+        await platform.execute(`UPDATE tenant_signups SET error = ? WHERE id = ?`,
+          [`invite email not delivered (SMTP)`, signupId]);
+      } catch (_) {}
+    }
 
     res.status(201).json({
       ok: true,
       slug: result.slug,
       portalUrl: result.portalUrl,
+      setPasswordUrl: result.setPasswordUrl, // lets the user finish even if email fails
+      email,
+      emailSent,                              // true | false | null (still sending)
       trialEndsAt: result.trialEndsAt,
     });
   } catch (e) {

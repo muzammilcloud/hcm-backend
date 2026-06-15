@@ -6,6 +6,12 @@ const { getIntegrationConfig } = require('./integrations');
 // and this lets each tenant use their own SMTP server.
 async function getTransporter() {
   const cfg = await getIntegrationConfig('smtp');
+  // Fail LOUDLY when no mail server is configured. Previously an empty host
+  // produced a silent connection failure, so invite emails vanished with no
+  // signal — the exact cause of "users never get their signup email".
+  if (!cfg || !cfg.host) {
+    throw new Error('No SMTP server configured (platform SMTP_HOST/SMTP_USER/SMTP_PASS env vars are missing).');
+  }
   return nodemailer.createTransport({
     host:   cfg.host,
     port:   parseInt(cfg.port || 587),
@@ -86,7 +92,7 @@ async function sendInviteEmail({ name, email, to, inviteToken, inviteUrl: provid
   `;
   try {
     await transporter.sendMail({
-      from:    `"Tickin" <${process.env.SMTP_USER}>`,
+      from:    await getFromAddress(),   // proper From (SMTP_FROM_EMAIL → SMTP_USER), not a bare SMTP_USER that may be empty
       to:      recipient,
       subject,
       html,
