@@ -144,19 +144,28 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const PORT = process.env.PORT || 4000;
-// Run migrations to completion BEFORE listening. Serving while the per-tenant
-// migrations + backfills run concurrently can OOM the memory-capped container
-// (NODE_OPTIONS=--max-old-space-size=256) and crash-loop it. The healthcheck
-// start-period in the Dockerfile is widened to give the migrations time so this
-// doesn't fail the deploy.
+// Listen FIRST (right after the platform DB is up) so /health responds within
+// seconds, then run the per-tenant migrations in the BACKGROUND.
+//
+// Why this is safe: migrateAllTenants() is SEQUENTIAL — one tenant at a time —
+// so memory stays low (the earlier OOM was from running tenants CONCURRENTLY,
+// which we no longer do). Existing tenants already have their schema, so the
+// background re-apply is idempotent and serving during it is safe.
+//
+// Why this matters: migrate-then-listen blocked /health until all tenants
+// finished, so once the tenant count grew the healthcheck timed out and EVERY
+// deploy failed. Listen-first keeps deploys fast + reliable regardless of scale.
 initPlatformDB()
-  .then(() => migrateAllTenants())
   .then(() => {
     scheduleReports();
     startOTChecker();
     app.listen(PORT, () => console.log(`🚀 Tickin backend running on port ${PORT}`));
+    // Fire-and-forget; sequential inside, errors isolated per tenant.
+    migrateAllTenants()
+      .then(() => console.log('[migrations] background migration complete'))
+      .catch(err => console.error('[migrations] background migration error:', err.message));
   })
   .catch(err => {
-    console.error('❌ Failed to initialize:', err.message);
+    console.error('❌ Failed to initialize platform DB:', err.message);
     process.exit(1);
   });
