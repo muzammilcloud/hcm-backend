@@ -183,15 +183,28 @@ async function initPlatformDB() {
     `INSERT IGNORE INTO founding_counter (id, used_count, max_count) VALUES (1, 0, 5)`
   );
 
-  // Seed the bootstrap platform admin from env vars (idempotent)
+  // Platform admin owner — managed by env. PLATFORM_OWNER_EMAIL / _PASSWORD are
+  // the single source of truth: change them in .env + redeploy and the account
+  // updates to match. When an explicit password env is set we SYNC it on startup
+  // (ON DUPLICATE KEY UPDATE); otherwise we only bootstrap a default if missing,
+  // so a restart never silently clobbers a manually-set password.
   const { hashPassword } = require('../db');
-  const ownerEmail    = (process.env.PLATFORM_OWNER_EMAIL    || process.env.ADMIN_USERNAME || 'admin@tickin.pro').trim().toLowerCase();
-  const ownerName     = (process.env.PLATFORM_OWNER_NAME     || 'Owner').trim();
-  const ownerPassword = (process.env.PLATFORM_OWNER_PASSWORD || process.env.ADMIN_PASSWORD || 'bootstrap').trim();
-  await db.execute(
-    `INSERT IGNORE INTO platform_admins (email, name, password_hash, role) VALUES (?, ?, ?, 'owner')`,
-    [ownerEmail, ownerName, hashPassword(ownerPassword)]
-  );
+  const ownerEmail    = (process.env.PLATFORM_OWNER_EMAIL || process.env.ADMIN_USERNAME || 'admin@tickin.pro').trim().toLowerCase();
+  const ownerName     = (process.env.PLATFORM_OWNER_NAME  || 'Owner').trim();
+  const explicitPw    = process.env.PLATFORM_OWNER_PASSWORD || process.env.ADMIN_PASSWORD || null;
+  const ownerPassword = (explicitPw || 'bootstrap').trim();
+  if (explicitPw) {
+    await db.execute(
+      `INSERT INTO platform_admins (email, name, password_hash, role) VALUES (?, ?, ?, 'owner')
+       ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), name = VALUES(name)`,
+      [ownerEmail, ownerName, hashPassword(ownerPassword)]
+    );
+  } else {
+    await db.execute(
+      `INSERT IGNORE INTO platform_admins (email, name, password_hash, role) VALUES (?, ?, ?, 'owner')`,
+      [ownerEmail, ownerName, hashPassword(ownerPassword)]
+    );
+  }
 
   console.log(`✅ Platform DB ready (${PLATFORM_DB_NAME})`);
 }
