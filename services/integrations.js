@@ -72,9 +72,10 @@ async function getIntegrationConfig(type) {
   if (!row || !row.enabled || !row.config_encrypted) {
     return FALLBACKS[type] ? FALLBACKS[type]() : null;
   }
-  // Custom SMTP is a Growth feature. A grandfathered Starter tenant may still
-  // have a saved+enabled SMTP row — ignore it and use the platform default so
-  // their plan grants no more than it advertises.
+  // Custom SMTP is available on every plan (incl. Starter), gated by the
+  // `smtp_integration` feature. If a tenant somehow lacks it (e.g. a future
+  // plan that removes it), ignore any saved row and use the platform default
+  // so their plan grants no more than it advertises.
   if (type === 'smtp' && !(await currentTenantHas('smtp_integration'))) {
     return FALLBACKS.smtp();
   }
