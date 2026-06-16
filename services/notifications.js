@@ -73,6 +73,10 @@ async function notify(pool, opts) {
     body = null, link = null,
     slackText = null, slackBlocks = null,
     sendSlack = true,
+    // Optional interactive buttons (e.g. Approve / Decline) rendered in the
+    // Slack DM alongside the dashboard link. Each: { text, action_id, value, style }.
+    // Clicking one POSTs to the app's Interactivity Request URL (/api/slack/<slug>/interactive).
+    actionButtons = null,
   } = opts;
   if (!recipient_user_id || !type || !title) return;
 
@@ -93,17 +97,27 @@ async function notify(pool, opts) {
     if (slackBlocks) blocks.push(...slackBlocks);
     else blocks.push({ type: 'section', text: { type: 'mrkdwn', text } });
 
-    if (link) {
-      blocks.push({
-        type: 'actions',
-        elements: [{
+    const elements = [];
+    if (actionButtons && actionButtons.length) {
+      for (const b of actionButtons) {
+        elements.push({
           type: 'button',
-          text: { type: 'plain_text', text: 'Open in Dashboard', emoji: true },
-          url:  FE_BASE_URL.replace(/\/$/, '') + link,
-          style: 'primary',
-        }],
+          text: { type: 'plain_text', text: b.text, emoji: true },
+          action_id: b.action_id,
+          value: String(b.value),
+          ...(b.style ? { style: b.style } : {}),
+        });
+      }
+    }
+    if (link) {
+      elements.push({
+        type: 'button',
+        text: { type: 'plain_text', text: 'Open in Dashboard', emoji: true },
+        url:  FE_BASE_URL.replace(/\/$/, '') + link,
+        ...(elements.length ? {} : { style: 'primary' }),
       });
     }
+    if (elements.length) blocks.push({ type: 'actions', elements });
 
     await dmUser(pool, recipient_user_id, text, blocks);
   }

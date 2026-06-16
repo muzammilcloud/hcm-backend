@@ -637,6 +637,12 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
               ? `📩 *${leave_type} request from Team Lead ${submitter.name}* — needs your final approval.`
               : `📩 *New ${leave_type} request from ${submitter.name}* — needs your final approval.`,
             slackBlocks,
+            // Let the admin approve/decline straight from Slack (handled by
+            // /api/slack/<slug>/interactive). The employee is notified on decision.
+            actionButtons: [
+              { text: 'Approve', action_id: 'leave_approve', value: rows[0].id, style: 'primary' },
+              { text: 'Decline', action_id: 'leave_decline', value: rows[0].id, style: 'danger' },
+            ],
           });
         }
         // Keep existing email-to-admin behaviour for direct-to-admin requests

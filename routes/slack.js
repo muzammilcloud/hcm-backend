@@ -10,6 +10,9 @@ const {
   fmtTimeInZone,
   getSlackUserTz,
 } = require('../services/slack');
+const { notify } = require('../services/notifications');
+
+const LEAVE_LINK = id => `/leaves?request=${id}`;
 
 // Slack slash commands all hit a shared host (api.tickin.pro) with no tenant
 // subdomain, so the tenant is carried in the URL: /api/slack/<slug>/<command>
@@ -115,28 +118,10 @@ router.post('/clockout', async (req, res) => {
     // Clock out
     await pool.execute('UPDATE portal_time_entries SET clock_out=NOW() WHERE id=?', [active[0].id]);
 
-    // Sum break time for this entry (now includes the auto-closed one)
-    const [breakRows] = await pool.execute(
-      'SELECT COALESCE(SUM(duration_seconds), 0) AS total FROM portal_breaks WHERE time_entry_id = ?',
-      [active[0].id]
-    );
-    const breakSeconds = Number(breakRows[0].total || 0);
-
-    // Gross + net duration
-    const clockInTime  = new Date(active[0].clock_in);
+    // Announce in #attendance channel — clock-out time only (no worked/break summary)
     const clockOutTime = new Date();
-    const grossMs      = clockOutTime - clockInTime;
-    const netMs        = Math.max(0, grossMs - breakSeconds * 1000);
-    const fmt = (ms) => {
-      const h = Math.floor(ms / 3600000);
-      const m = Math.floor((ms % 3600000) / 60000);
-      return h > 0 ? `${h}h ${m}m` : `${m}m`;
-    };
-    const breakLabel = breakSeconds > 0 ? ` (break *${fmt(breakSeconds * 1000)}*)` : '';
-
-    // Announce in #attendance channel
     const timestampOut = Math.floor(clockOutTime.getTime() / 1000);
-    await postToSlack(`*${emp.name}* (${emp.department}) clocked out at <!date^${timestampOut}^{time}|${new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}> — worked *${fmt(netMs)}*${breakLabel}`);
+    await postToSlack(`*${emp.name}* (${emp.department}) clocked out at <!date^${timestampOut}^{time}|${new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}>`);
 
   } catch (e) {
     console.error('Slack /clockout error:', e.message);
@@ -197,8 +182,9 @@ router.post('/break', async (req, res) => {
          VALUES (?, ?, NOW(), 'slack')`,
         [emp.id, entryId]
       );
-      await postToSlack(`☕ *${emp.name}* (${emp.department}) started a break. Work timer paused.`);
-      return reply(`☕ Break started. Your work timer is paused. Type */break* again when you're back.`);
+      // Channel message only — no ephemeral self-reply, no emoji.
+      await postToSlack(`*${emp.name}* (${emp.department}) started a break. Work timer paused.`);
+      return;
     }
 
     // action === 'stop'
@@ -213,13 +199,9 @@ router.post('/break', async (req, res) => {
        WHERE id = ?`,
       [openBreak[0].id]
     );
-    const since   = new Date(openBreak[0].break_start);
-    const elapsed = Math.floor((Date.now() - since) / 1000);
-    const mins    = Math.floor(elapsed / 60);
-    const secs    = elapsed % 60;
-    const dur     = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-    await postToSlack(`✅ *${emp.name}* (${emp.department}) ended their break after *${dur}*. Work timer resumed.`);
-    return reply(`✅ Break ended after *${dur}*. Work timer resumed.`);
+    // Channel message only — no ephemeral self-reply, no emoji, no duration.
+    await postToSlack(`*${emp.name}* (${emp.department}) ended their break. Work timer resumed.`);
+    return;
 
   } catch (e) {
     console.error('Slack /break error:', e.message);
@@ -318,6 +300,67 @@ router.post('/interactive', async (req, res) => {
     const userId   = payload.user?.id;
 
     const pool = await getDB();
+
+    // ── Leave approve / decline straight from the admin's Slack DM ────────
+    if (actionId === 'leave_approve' || actionId === 'leave_decline') {
+      const leaveId  = parseInt(value);
+      const replace  = (text) => axios.post(payload.response_url, { replace_original: true, text }).catch(() => {});
+      const ephemeral = (text) => axios.post(payload.response_url, { replace_original: false, response_type: 'ephemeral', text }).catch(() => {});
+
+      // Only an active sys-admin may finalise from Slack.
+      const [actor] = await pool.execute(
+        "SELECT id, name, portal_role FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
+        [userId]
+      );
+      if (!actor[0] || actor[0].portal_role !== 'sys-admin') {
+        await ephemeral('⚠️ Only an admin can approve or decline leave requests.');
+        return;
+      }
+
+      const [lrRows] = await pool.execute(
+        `SELECT lr.*, pu.name AS employee_name, pu.department, pu.email AS employee_email
+           FROM leave_requests lr JOIN portal_users pu ON lr.employee_id = pu.id
+          WHERE lr.id=?`, [leaveId]
+      );
+      const lr = lrRows[0];
+      if (!lr) { await replace('This leave request no longer exists.'); return; }
+      if (!['pending', 'approved_tl'].includes(lr.status)) {
+        await replace(`This request was already handled (status: ${String(lr.status).replace('_', ' ')}).`);
+        return;
+      }
+
+      const approved    = actionId === 'leave_approve';
+      const finalStatus = approved ? 'approved' : 'declined_admin';
+      const history = JSON.parse(lr.action_history || '[]');
+      history.push({ actor: 'Admin', role: 'admin', action: approved ? 'approved' : 'declined', via: 'slack', note: null, ts: new Date().toISOString() });
+      await pool.execute('UPDATE leave_requests SET status=?, action_history=? WHERE id=?', [finalStatus, JSON.stringify(history), leaveId]);
+
+      await logEvent(pool, {
+        employee_id: lr.employee_id, employee_name: lr.employee_name, department: lr.department, role: null,
+        event: approved ? 'leave_approved' : 'leave_declined_admin',
+        detail: `Admin ${approved ? 'approved' : 'declined'} ${lr.leave_type} from ${lr.start_date} to ${lr.end_date} (via Slack)`,
+      });
+
+      // Notify the employee — Slack DM + in-app — exactly like the web decision.
+      const fmtDate = d => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
+      const summary = `*${lr.leave_type}*  ·  ${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)}`;
+      await notify(pool, {
+        recipient_user_id: lr.employee_id,
+        type: approved ? 'leave_approved' : 'leave_declined',
+        title: approved ? `✅ ${lr.leave_type} approved` : `❌ ${lr.leave_type} declined by Admin`,
+        body:  approved ? 'Your leave has been approved.' : 'Your leave was declined.',
+        link:  LEAVE_LINK(leaveId),
+        slackText: approved
+          ? `✅ *${lr.leave_type}* — Your leave request has been *approved* by Admin.`
+          : `❌ *${lr.leave_type}* — Your leave request was *declined* by Admin.`,
+        slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: summary } }],
+      });
+
+      // Collapse the admin's message so the buttons can't be clicked twice.
+      await replace(`${approved ? '✅ Approved' : '❌ Declined'} — *${lr.leave_type}* for *${lr.employee_name}* (${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)}). The employee has been notified.`);
+      return;
+    }
+
     const timeEntryId = parseInt(value);
 
     if (actionId === 'ot_continue') {
