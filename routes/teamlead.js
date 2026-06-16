@@ -188,6 +188,11 @@ router.put('/teamlead/team/leave-requests/:id', requireTeamLead, async (req, res
           link:  LEAVE_LINK(lr.id),
           slackText: `✅ *${tlName}* approved a *${lr.leave_type}* request from *${lr.emp_name}* — needs your final approval.`,
           slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: summary } }],
+          // Final admin approve/decline straight from Slack.
+          actionButtons: [
+            { text: 'Approve', action_id: 'leave_approve', value: lr.id, style: 'primary' },
+            { text: 'Decline', action_id: 'leave_decline', value: lr.id, style: 'danger' },
+          ],
         });
       }
     } else {

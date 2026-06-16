@@ -619,6 +619,12 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
             link:  LEAVE_LINK(rows[0].id),
             slackText: `📩 *New ${leave_type} request from ${submitter.name}* — needs your review.`,
             slackBlocks,
+            // First-stage (team-lead) approve/decline from Slack. Approving
+            // forwards it to the admin for final sign-off.
+            actionButtons: [
+              { text: 'Approve', action_id: 'leave_tl_approve', value: rows[0].id, style: 'primary' },
+              { text: 'Decline', action_id: 'leave_tl_decline', value: rows[0].id, style: 'danger' },
+            ],
           });
         }
       } else {

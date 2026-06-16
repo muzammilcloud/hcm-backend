@@ -361,6 +361,88 @@ router.post('/interactive', async (req, res) => {
       return;
     }
 
+    // ── Team-lead first-stage approve / decline (Growth two-stage flow) ───
+    if (actionId === 'leave_tl_approve' || actionId === 'leave_tl_decline') {
+      const leaveId   = parseInt(value);
+      const replace   = (text) => axios.post(payload.response_url, { replace_original: true, text }).catch(() => {});
+      const ephemeral = (text) => axios.post(payload.response_url, { replace_original: false, response_type: 'ephemeral', text }).catch(() => {});
+      const fmtDate   = d => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
+
+      // Resolve the clicking Slack user → their employee record.
+      const [clk] = await pool.execute(
+        "SELECT id AS portal_user_id, employee_id, name FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
+        [userId]
+      );
+      const clicker = clk[0];
+
+      const [lrRows] = await pool.execute(
+        `SELECT lr.*, pu.name AS employee_name, pu.department, pu.email AS employee_email, e.reports_to
+           FROM leave_requests lr
+           JOIN portal_users pu ON lr.employee_id = pu.id
+           JOIN employees e     ON pu.employee_id = e.id
+          WHERE lr.id=?`, [leaveId]
+      );
+      const lr = lrRows[0];
+      if (!lr) { await replace('This leave request no longer exists.'); return; }
+      if (lr.status !== 'pending_tl') {
+        await replace(`This request is no longer awaiting team-lead review (status: ${String(lr.status).replace('_', ' ')}).`);
+        return;
+      }
+      // Only the requester's own team lead may review.
+      if (!clicker || !clicker.employee_id || String(lr.reports_to) !== String(clicker.employee_id)) {
+        await ephemeral('⚠️ Only this employee’s team lead can review this request.');
+        return;
+      }
+
+      const approved  = actionId === 'leave_tl_approve';
+      const tlName    = clicker.name || 'Team Lead';
+      const newStatus = approved ? 'approved_tl' : 'declined_tl';
+      const history   = JSON.parse(lr.action_history || '[]');
+      history.push({ actor: tlName, role: 'team_lead', action: approved ? 'approve' : 'decline', via: 'slack', note: null, ts: new Date().toISOString() });
+      await pool.execute('UPDATE leave_requests SET status=?, action_history=? WHERE id=?', [newStatus, JSON.stringify(history), leaveId]);
+
+      await logEvent(pool, {
+        employee_name: lr.employee_name, department: lr.department,
+        event: approved ? 'leave_tl_approved' : 'leave_tl_declined',
+        detail: `Team lead ${approved ? 'approved → pending admin' : 'declined'} ${lr.leave_type} (${lr.start_date} – ${lr.end_date}) (via Slack)`,
+      });
+
+      const summary = `*${lr.leave_type}*  ·  ${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)}`;
+      if (approved) {
+        // Forward to all sys-admins for final sign-off — with their own buttons.
+        const [admins] = await pool.execute("SELECT id FROM portal_users WHERE portal_role='sys-admin' AND status='active'");
+        for (const a of admins) {
+          await notify(pool, {
+            recipient_user_id: a.id,
+            type: 'leave_tl_approved',
+            title: `${tlName} approved ${lr.leave_type} for ${lr.employee_name}`,
+            body:  `${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)} · awaiting your final approval`,
+            link:  LEAVE_LINK(leaveId),
+            slackText: `✅ *${tlName}* approved a *${lr.leave_type}* request from *${lr.employee_name}* — needs your final approval.`,
+            slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: summary } }],
+            actionButtons: [
+              { text: 'Approve', action_id: 'leave_approve', value: leaveId, style: 'primary' },
+              { text: 'Decline', action_id: 'leave_decline', value: leaveId, style: 'danger' },
+            ],
+          });
+        }
+        await replace(`✅ Approved — *${lr.leave_type}* for *${lr.employee_name}* forwarded to the admin for final approval.`);
+      } else {
+        // Decline ends here — notify the employee.
+        await notify(pool, {
+          recipient_user_id: lr.employee_id,
+          type: 'leave_tl_declined',
+          title: `❌ ${lr.leave_type} declined by ${tlName}`,
+          body:  `Reviewed by ${tlName}`,
+          link:  LEAVE_LINK(leaveId),
+          slackText: `❌ *${lr.leave_type}* — Your team lead *${tlName}* declined your request.`,
+          slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: summary } }],
+        });
+        await replace(`❌ Declined — *${lr.leave_type}* for *${lr.employee_name}*. The employee has been notified.`);
+      }
+      return;
+    }
+
     const timeEntryId = parseInt(value);
 
     if (actionId === 'ot_continue') {
