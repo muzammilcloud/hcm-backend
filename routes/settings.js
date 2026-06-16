@@ -4,7 +4,7 @@ const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { CURRENCIES, COUNTRIES, COUNTRY_DEFAULT_CURRENCY } = require('../services/locales');
 const { getPreset } = require('../services/taxModules');
-const { DAY_KEYS, parseWorkingDays } = require('../config/business');
+const { DAY_KEYS, parseWorkingDays, isValidTimezone } = require('../config/business');
 
 // GET /api/settings/locales — public lists for the picker UI
 router.get('/settings/locales', (req, res) => {
@@ -42,7 +42,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       company_name, company_address, company_logo_url,
       slip_title, slip_signatory_name, slip_signatory_title,
       daily_working_hours, working_days, monthly_required_hours_override,
-      daily_report_hour,
+      daily_report_hour, timezone,
     } = req.body || {};
 
     // Daily Leave & WFH report send hour (0–23, tenant-local). Optional.
@@ -53,6 +53,19 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
         return res.status(400).json({ error: 'daily_report_hour must be an integer 0–23' });
       }
       nextReportHour = h;
+    }
+
+    // Explicit IANA timezone. undefined = leave alone; '' / null = clear (revert
+    // to country-derived); a string = must be a valid zone.
+    let timezoneOp; // undefined = no-op; otherwise the value to store (string | null)
+    if (timezone !== undefined) {
+      if (timezone === null || timezone === '') {
+        timezoneOp = null;
+      } else if (isValidTimezone(timezone)) {
+        timezoneOp = timezone;
+      } else {
+        return res.status(400).json({ error: `Invalid timezone: ${timezone}` });
+      }
     }
 
     const [rows] = await pool.execute('SELECT * FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
@@ -142,6 +155,12 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
         ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
       ]
     );
+
+    // Timezone is updated separately (not COALESCE) so it can be explicitly
+    // cleared, and so an unrelated settings save never touches it.
+    if (timezoneOp !== undefined) {
+      await pool.execute('UPDATE tenant_settings SET timezone = ? WHERE singleton_key = 1', [timezoneOp]);
+    }
 
     // Auto-load tax preset on country change — only when the admin hasn't
     // confirmed brackets yet (so we don't overwrite hand-edited ones).

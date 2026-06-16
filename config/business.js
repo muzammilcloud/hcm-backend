@@ -90,11 +90,24 @@ const COUNTRY_TZ = {
 const DEFAULT_TZ = 'Asia/Karachi';
 
 // Resolve a tenant's timezone from its country_code (tenant_settings).
+// Is this a valid IANA timezone the runtime can resolve?
+function isValidTimezone(tz) {
+  if (!tz || typeof tz !== 'string') return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; }
+  catch (_) { return false; }
+}
+
+// Resolve a tenant's timezone. Preference order:
+//   1. explicit `timezone` (admin-picked IANA zone) — exact, multi-tz safe
+//   2. country_code → representative zone (COUNTRY_TZ)
+//   3. DEFAULT_TZ
 async function getTenantTimezone(pool) {
   try {
     const [rows] = await pool.execute(
-      'SELECT country_code FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
+      'SELECT timezone, country_code FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
     );
+    const explicit = rows[0]?.timezone;
+    if (isValidTimezone(explicit)) return explicit;
     const code = rows[0]?.country_code;
     return (code && COUNTRY_TZ[code]) || DEFAULT_TZ;
   } catch (_) {
@@ -159,6 +172,7 @@ module.exports = {
   DAY_KEYS,
   COUNTRY_TZ,
   DEFAULT_TZ,
+  isValidTimezone,
   getBusinessConfig,
   getTenantTimezone,
   getTenantToday,

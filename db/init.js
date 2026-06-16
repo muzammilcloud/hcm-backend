@@ -181,6 +181,10 @@ async function initTenantSchema(poolArg) {
   // scheduler interprets it in the tenant's timezone (derived from country).
   // Default 12 = noon, preserving the prior behaviour.
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN daily_report_hour TINYINT NOT NULL DEFAULT 12`); } catch (_) {}
+  // Explicit IANA timezone (e.g. 'America/Los_Angeles'). When set, it overrides
+  // the country-derived zone for all scheduling + "today" math. NULL = derive
+  // from country_code (back-compat for existing tenants).
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN timezone VARCHAR(64) NULL DEFAULT NULL`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}

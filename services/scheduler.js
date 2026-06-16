@@ -3,7 +3,7 @@ const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBir
 const { postLeaveReportToSlack } = require('./slack');
 const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./otReconciliation');
 const { tenantHas } = require('./features');
-const { getBusinessConfig, COUNTRY_TZ, DEFAULT_TZ } = require('../config/business');
+const { getBusinessConfig, COUNTRY_TZ, DEFAULT_TZ, isValidTimezone } = require('../config/business');
 
 // Read wall-clock hour/minute in a given IANA timezone (server may run in any tz).
 function nowIn(tz) {
@@ -297,16 +297,20 @@ async function maybeSendDailyLeaveReport(tenant) {
 
   // Resolve the tenant's timezone (from country) and the admin-chosen send hour
   // (0–23, tenant-local; default noon) in a single read.
-  let countryCode = null, reportHour = 12;
+  let explicitTz = null, countryCode = null, reportHour = 12;
   try {
     const [s] = await pool.execute(
-      'SELECT country_code, daily_report_hour FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
+      'SELECT timezone, country_code, daily_report_hour FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
     );
+    explicitTz  = s[0]?.timezone || null;
     countryCode = s[0]?.country_code || null;
     const h = Number(s[0]?.daily_report_hour);
     if (Number.isInteger(h) && h >= 0 && h <= 23) reportHour = h;
   } catch (_) { /* defaults below */ }
-  const tz = (countryCode && COUNTRY_TZ[countryCode]) || DEFAULT_TZ;
+  // Explicit admin-picked timezone wins; else derive from country; else default.
+  const tz = isValidTimezone(explicitTz)
+    ? explicitTz
+    : ((countryCode && COUNTRY_TZ[countryCode]) || DEFAULT_TZ);
 
   // Fire at the configured hour OR LATER the same day (catch-up), local time.
   // A single exact-hour match was fragile: a deploy/restart that shifts the
