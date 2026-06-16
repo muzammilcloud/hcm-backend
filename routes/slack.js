@@ -11,6 +11,7 @@ const {
   getSlackUserTz,
 } = require('../services/slack');
 const { notify } = require('../services/notifications');
+const { recordAuditActor } = require('../services/audit');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
 
@@ -309,7 +310,7 @@ router.post('/interactive', async (req, res) => {
 
       // Only an active sys-admin may finalise from Slack.
       const [actor] = await pool.execute(
-        "SELECT id, name, portal_role FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
+        "SELECT id, name, email, portal_role FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
         [userId]
       );
       if (!actor[0] || actor[0].portal_role !== 'sys-admin') {
@@ -356,6 +357,12 @@ router.post('/interactive', async (req, res) => {
         slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: summary } }],
       });
 
+      await recordAuditActor({
+        actorId: actor[0].id, actorEmail: actor[0].email, actorRole: 'sys-admin',
+        action: `leave.${approved ? 'approved' : 'declined'}`, target: { type: 'leave_request', id: leaveId },
+        after: { status: finalStatus, via: 'slack' },
+      });
+
       // Collapse the admin's message so the buttons can't be clicked twice.
       await replace(`${approved ? '✅ Approved' : '❌ Declined'} — *${lr.leave_type}* for *${lr.employee_name}* (${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)}). The employee has been notified.`);
       return;
@@ -370,7 +377,7 @@ router.post('/interactive', async (req, res) => {
 
       // Resolve the clicking Slack user → their employee record.
       const [clk] = await pool.execute(
-        "SELECT id AS portal_user_id, employee_id, name FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
+        "SELECT id AS portal_user_id, employee_id, name, email FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
         [userId]
       );
       const clicker = clk[0];
@@ -440,6 +447,54 @@ router.post('/interactive', async (req, res) => {
         });
         await replace(`❌ Declined — *${lr.leave_type}* for *${lr.employee_name}*. The employee has been notified.`);
       }
+      await recordAuditActor({
+        actorId: clicker.portal_user_id, actorEmail: clicker.email, actorRole: 'team-lead',
+        action: `leave.tl_${approved ? 'approved' : 'declined'}`, target: { type: 'leave_request', id: leaveId },
+        after: { status: newStatus, via: 'slack' },
+      });
+      return;
+    }
+
+    // ── Attendance adjustment approve / reject from Slack ─────────────────
+    if (actionId === 'adj_approve' || actionId === 'adj_reject' ||
+        actionId === 'adj_tl_approve' || actionId === 'adj_tl_reject') {
+      const adjId     = parseInt(value);
+      const isTLstage = actionId.startsWith('adj_tl_');
+      const action    = actionId.endsWith('_reject') ? 'reject' : 'approve';
+      const replace   = (text) => axios.post(payload.response_url, { replace_original: true, text }).catch(() => {});
+      const ephemeral = (text) => axios.post(payload.response_url, { replace_original: false, response_type: 'ephemeral', text }).catch(() => {});
+
+      const [clk] = await pool.execute(
+        "SELECT id AS portal_user_id, employee_id, name, email, portal_role, department FROM portal_users WHERE slack_user_id=? AND status='active' LIMIT 1",
+        [userId]
+      );
+      const clicker = clk[0];
+      if (!clicker) { await ephemeral('⚠️ We could not match your Slack account to a Tickin user.'); return; }
+
+      // Lazy require avoids a load-time cycle (adjustments → notifications → slack).
+      const { applyTeamLeadAdjustmentDecision, applyAdminAdjustmentDecision } = require('./adjustments');
+
+      let result;
+      if (isTLstage) {
+        if (clicker.portal_role !== 'team-lead') { await ephemeral('⚠️ Only a team lead can review this adjustment.'); return; }
+        result = await applyTeamLeadAdjustmentDecision(pool, {
+          adjustmentId: adjId, department: clicker.department, action, note: null,
+          tlPortalUserId: clicker.portal_user_id, tlName: clicker.name,
+          actor: { id: clicker.portal_user_id, email: clicker.email, role: 'team-lead', via: 'slack' },
+        });
+      } else {
+        if (clicker.portal_role !== 'sys-admin') { await ephemeral('⚠️ Only an admin can finalise this adjustment.'); return; }
+        result = await applyAdminAdjustmentDecision(pool, {
+          adjustmentId: adjId, action, note: null, adminPortalUserId: clicker.portal_user_id,
+          actor: { id: clicker.portal_user_id, email: clicker.email, role: 'sys-admin', via: 'slack' },
+        });
+      }
+
+      if (!result.ok) { await replace(result.error || 'This adjustment is no longer actionable.'); return; }
+      const verb = action === 'approve'
+        ? (isTLstage ? '✅ Approved → sent to admin' : '✅ Approved')
+        : '❌ Rejected';
+      await replace(`${verb} — attendance adjustment for *${result.adj.requester_name}*. The employee has been notified.`);
       return;
     }
 

@@ -5,6 +5,17 @@ const { requireEmployee, requireTeamLead, requireAdmin } = require('../middlewar
 const { dmUser, dmRoleInDept, dmAllSysAdmins, notify } = require('../services/notifications');
 const { getBusinessConfig } = require('../config/business');
 const { tenantHas } = require('../services/features');
+const { recordAuditActor } = require('../services/audit');
+
+// Slack action-button sets reused on adjustment notifications.
+const ADJ_TL_BUTTONS = id => ([
+  { text: 'Approve', action_id: 'adj_tl_approve', value: id, style: 'primary' },
+  { text: 'Reject',  action_id: 'adj_tl_reject',  value: id, style: 'danger' },
+]);
+const ADJ_ADMIN_BUTTONS = id => ([
+  { text: 'Approve', action_id: 'adj_approve', value: id, style: 'primary' },
+  { text: 'Reject',  action_id: 'adj_reject',  value: id, style: 'danger' },
+]);
 
 const toMySQL = iso => new Date(iso).toISOString().slice(0, 19).replace('T', ' ');
 
@@ -115,6 +126,7 @@ router.post('/employee/attendance-adjustments', requireEmployee, async (req, res
           link:  ADJ_LINK(adj[0].id),
           slackText: `📋 *New attendance adjustment request from ${pu.name}* (${pu.department}) — needs your review.`,
           slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+          actionButtons: ADJ_TL_BUTTONS(adj[0].id),
         });
       }
     } else {
@@ -133,6 +145,7 @@ router.post('/employee/attendance-adjustments', requireEmployee, async (req, res
           link:  ADJ_LINK(adj[0].id),
           slackText: `📋 *Attendance adjustment request from ${who}* (${pu.department}) — needs your review.`,
           slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+          actionButtons: ADJ_ADMIN_BUTTONS(adj[0].id),
         });
       }
     }
@@ -195,64 +208,16 @@ router.get('/teamlead/attendance-adjustments', requireTeamLead, async (req, res)
 // PUT /api/teamlead/attendance-adjustments/:id — approve / reject / needs_correction
 router.put('/teamlead/attendance-adjustments/:id', requireTeamLead, async (req, res) => {
   const { action, note } = req.body; // action: 'approve' | 'reject' | 'needs_correction'
-  if (!['approve', 'reject', 'needs_correction'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
   try {
     const pool = await getDB();
-    const [rows] = await pool.execute(
-      `SELECT aa.*, pu.name AS requester_name, pu.department
-       FROM attendance_adjustments aa
-       JOIN portal_users pu ON aa.portal_user_id = pu.id
-       WHERE aa.id=? AND aa.department=? AND aa.status IN ('pending_tl','needs_correction')`,
-      [req.params.id, req.teamDepartment]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Request not found or not actionable' });
-    const adj = rows[0];
-
-    const newStatus = action === 'approve' ? 'pending_admin' : action === 'reject' ? 'rejected' : 'needs_correction';
-    await pool.execute(
-      `UPDATE attendance_adjustments
-       SET status=?, tl_note=?, tl_reviewed_by=?, tl_reviewed_at=NOW(), updated_at=NOW()
-       WHERE id=?`,
-      [newStatus, note || null, req.portalUserId, adj.id]
-    );
-
     const [tlRows] = await pool.execute('SELECT name FROM portal_users WHERE id=?', [req.portalUserId]);
-    const tlName   = tlRows[0]?.name || 'Team Lead';
-    const [updated] = await pool.execute('SELECT * FROM attendance_adjustments WHERE id=?', [adj.id]);
-    const msgText   = buildRequestBlock(updated[0], adj.requester_name, action.replace('_', ' '), note);
-
-    if (action === 'approve') {
-      // Notify sys-admins
-      const [admins] = await pool.execute(
-        "SELECT id FROM portal_users WHERE portal_role='sys-admin' AND status='active'"
-      );
-      for (const a of admins) {
-        await notify(pool, {
-          recipient_user_id: a.id,
-          type: 'adjustment_tl_approved',
-          title: `${tlName} approved adjustment from ${adj.requester_name}`,
-          body:  `${adj.department} · awaiting your final approval`,
-          link:  ADJ_LINK(adj.id),
-          slackText: `✅ *${tlName}* approved an adjustment request from *${adj.requester_name}* — needs your final approval.`,
-          slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
-        });
-      }
-    } else {
-      // Notify employee
-      const actionLabel = action === 'reject' ? 'Rejected' : 'Needs Correction';
-      const emoji       = action === 'reject' ? '❌' : '🔄';
-      await notify(pool, {
-        recipient_user_id: adj.portal_user_id,
-        type: action === 'reject' ? 'adjustment_rejected' : 'adjustment_needs_correction',
-        title: `${emoji} Adjustment ${actionLabel} by ${tlName}`,
-        body:  note || `Reviewed by ${tlName}`,
-        link:  ADJ_LINK(adj.id),
-        slackText: `${emoji} ${actionLabel} — Your attendance adjustment request was reviewed by *${tlName}*.`,
-        slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
-      });
-    }
-
-    res.json(updated[0]);
+    const r = await applyTeamLeadAdjustmentDecision(pool, {
+      adjustmentId: req.params.id, department: req.teamDepartment, action, note,
+      tlPortalUserId: req.portalUserId, tlName: tlRows[0]?.name || 'Team Lead',
+      actor: { id: req.portalUserId, email: req.user?.email, role: 'team-lead', via: 'web' },
+    });
+    if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+    res.json(r.updated);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -289,100 +254,175 @@ router.get('/attendance-adjustments', requireAdmin, async (req, res) => {
 // PUT /api/attendance-adjustments/:id — final review
 router.put('/attendance-adjustments/:id', requireAdmin, async (req, res) => {
   const { action, note } = req.body; // action: 'approve' | 'reject' | 'needs_correction'
-  if (!['approve', 'reject', 'needs_correction'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
   try {
     const pool = await getDB();
-    const [rows] = await pool.execute(
-      `SELECT aa.*, pu.name AS requester_name
-       FROM attendance_adjustments aa
-       JOIN portal_users pu ON aa.portal_user_id = pu.id
-       WHERE aa.id=? AND aa.status IN ('pending_admin','needs_correction')`,
-      [req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Request not found or not actionable' });
-    const adj = rows[0];
-
-    const newStatus = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'needs_correction';
-    await pool.execute(
-      `UPDATE attendance_adjustments
-       SET status=?, admin_note=?, admin_reviewed_by=?, admin_reviewed_at=NOW(), updated_at=NOW()
-       WHERE id=?`,
-      [newStatus, note || null, req.adminId, adj.id]
-    );
-
-    // ── On approval: update / create time entry + recalc OT ────────────
-    if (action === 'approve') {
-      if (adj.type === 'adjust' && adj.time_entry_id) {
-        // Update existing entry
-        const sets = [];
-        const vals = [];
-        if (adj.requested_clock_in)  { sets.push('clock_in=?');  vals.push(toMySQL(adj.requested_clock_in)); }
-        if (adj.requested_clock_out) { sets.push('clock_out=?'); vals.push(toMySQL(adj.requested_clock_out)); }
-        if (sets.length > 0) {
-          vals.push(adj.time_entry_id);
-          await pool.execute(`UPDATE portal_time_entries SET ${sets.join(',')} WHERE id=?`, vals);
-          await recalcOT(pool, adj.time_entry_id, adj.portal_user_id);
-        }
-      } else if (adj.type === 'missing') {
-        // Default the clock-in to the employee's assigned shift start_time (not a
-        // hardcoded 09:00) when the request didn't specify one.
-        let defaultClockIn = `${adj.requested_date} 09:00:00`;
-        try {
-          const [pu] = await pool.execute('SELECT department FROM portal_users WHERE id=?', [adj.portal_user_id]);
-          const dept = pu[0]?.department || null;
-          const [sh] = await pool.execute(
-            `SELECT start_time FROM shifts
-               WHERE is_active=1 AND ((scope='employee' AND scope_id=?) OR (scope='department' AND scope_id=?))
-             ORDER BY (scope='employee') DESC LIMIT 1`,
-            [String(adj.portal_user_id), dept]
-          );
-          if (sh[0]?.start_time) defaultClockIn = `${adj.requested_date} ${sh[0].start_time}`;
-        } catch (_) {}
-
-        // Create new entry
-        const [ins] = await pool.execute(
-          `INSERT INTO portal_time_entries (portal_user_id, clock_in, clock_out, notes)
-           VALUES (?,?,?,?)`,
-          [
-            adj.portal_user_id,
-            adj.requested_clock_in  ? toMySQL(adj.requested_clock_in)  : defaultClockIn,
-            adj.requested_clock_out ? toMySQL(adj.requested_clock_out) : null,
-            'Created via attendance adjustment request',
-          ]
-        );
-        await recalcOT(pool, ins.insertId, adj.portal_user_id);
-        // Link time entry to adjustment for audit trail
-        await pool.execute('UPDATE attendance_adjustments SET time_entry_id=? WHERE id=?', [ins.insertId, adj.id]);
-      }
-    }
-
-    const [updated] = await pool.execute('SELECT * FROM attendance_adjustments WHERE id=?', [adj.id]);
-    const msgText   = buildRequestBlock(updated[0], adj.requester_name, action.replace('_', ' '), note);
-
-    const labelMap = {
-      approve: { txt: 'Approved',         emoji: '✅', type: 'adjustment_approved' },
-      reject:  { txt: 'Rejected',         emoji: '❌', type: 'adjustment_rejected' },
-      needs_correction: { txt: 'Needs Correction', emoji: '🔄', type: 'adjustment_needs_correction' },
-    };
-    const lbl = labelMap[action];
-    await notify(pool, {
-      recipient_user_id: adj.portal_user_id,
-      type: lbl.type,
-      title: `${lbl.emoji} Adjustment ${lbl.txt} by Admin`,
-      body:  note || 'Reviewed by HR/Admin',
-      link:  ADJ_LINK(adj.id),
-      slackText: `${lbl.emoji} ${lbl.txt} — Your attendance adjustment request has been reviewed by HR/Admin.`,
-      slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+    const r = await applyAdminAdjustmentDecision(pool, {
+      adjustmentId: req.params.id, action, note, adminPortalUserId: req.adminId,
+      actor: { id: req.adminId, email: req.user?.email, role: 'sys-admin', via: 'web' },
     });
-
-    await logEvent(pool, {
-      employee_name: adj.requester_name, department: adj.department, role: '',
-      event: `adjustment_${newStatus}`, detail: `Attendance adjustment for ${adj.requested_date} — ${newStatus}`
-    });
-
-    res.json(updated[0]);
+    if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+    res.json(r.updated);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Shared decision logic — single source of truth for the web routes AND the
+// Slack interactive buttons (routes/slack.js). Returns { ok, updated?, error?, code? }.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Team-lead stage: pending_tl → pending_admin (approve) / rejected / needs_correction.
+async function applyTeamLeadAdjustmentDecision(pool, { adjustmentId, department, action, note, tlPortalUserId, tlName, actor }) {
+  if (!['approve', 'reject', 'needs_correction'].includes(action)) return { ok: false, error: 'Invalid action', code: 400 };
+  const [rows] = await pool.execute(
+    `SELECT aa.*, pu.name AS requester_name, pu.department
+       FROM attendance_adjustments aa
+       JOIN portal_users pu ON aa.portal_user_id = pu.id
+      WHERE aa.id=? AND aa.department=? AND aa.status IN ('pending_tl','needs_correction')`,
+    [adjustmentId, department]
+  );
+  if (!rows[0]) return { ok: false, error: 'Request not found or not actionable', code: 404 };
+  const adj = rows[0];
+
+  const newStatus = action === 'approve' ? 'pending_admin' : action === 'reject' ? 'rejected' : 'needs_correction';
+  await pool.execute(
+    `UPDATE attendance_adjustments SET status=?, tl_note=?, tl_reviewed_by=?, tl_reviewed_at=NOW(), updated_at=NOW() WHERE id=?`,
+    [newStatus, note || null, tlPortalUserId, adj.id]
+  );
+
+  const [updated] = await pool.execute('SELECT * FROM attendance_adjustments WHERE id=?', [adj.id]);
+  const msgText   = buildRequestBlock(updated[0], adj.requester_name, action.replace('_', ' '), note);
+
+  if (action === 'approve') {
+    const [admins] = await pool.execute("SELECT id FROM portal_users WHERE portal_role='sys-admin' AND status='active'");
+    for (const a of admins) {
+      await notify(pool, {
+        recipient_user_id: a.id,
+        type: 'adjustment_tl_approved',
+        title: `${tlName} approved adjustment from ${adj.requester_name}`,
+        body:  `${adj.department} · awaiting your final approval`,
+        link:  ADJ_LINK(adj.id),
+        slackText: `✅ *${tlName}* approved an adjustment request from *${adj.requester_name}* — needs your final approval.`,
+        slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+        actionButtons: ADJ_ADMIN_BUTTONS(adj.id),
+      });
+    }
+  } else {
+    const actionLabel = action === 'reject' ? 'Rejected' : 'Needs Correction';
+    const emoji       = action === 'reject' ? '❌' : '🔄';
+    await notify(pool, {
+      recipient_user_id: adj.portal_user_id,
+      type: action === 'reject' ? 'adjustment_rejected' : 'adjustment_needs_correction',
+      title: `${emoji} Adjustment ${actionLabel} by ${tlName}`,
+      body:  note || `Reviewed by ${tlName}`,
+      link:  ADJ_LINK(adj.id),
+      slackText: `${emoji} ${actionLabel} — Your attendance adjustment request was reviewed by *${tlName}*.`,
+      slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+    });
+  }
+
+  await recordAuditActor({
+    actorId: actor?.id, actorEmail: actor?.email, actorRole: actor?.role,
+    action: `adjustment.tl_${action}`, target: { type: 'attendance_adjustment', id: adj.id },
+    after: { status: newStatus, via: actor?.via || 'web', note: note || null },
+  });
+  return { ok: true, updated: updated[0], adj, newStatus };
+}
+
+// Admin stage: pending_admin → approved (applies the time entry + recalcs OT) /
+// rejected / needs_correction.
+async function applyAdminAdjustmentDecision(pool, { adjustmentId, action, note, adminPortalUserId, actor }) {
+  if (!['approve', 'reject', 'needs_correction'].includes(action)) return { ok: false, error: 'Invalid action', code: 400 };
+  const [rows] = await pool.execute(
+    `SELECT aa.*, pu.name AS requester_name
+       FROM attendance_adjustments aa
+       JOIN portal_users pu ON aa.portal_user_id = pu.id
+      WHERE aa.id=? AND aa.status IN ('pending_admin','needs_correction')`,
+    [adjustmentId]
+  );
+  if (!rows[0]) return { ok: false, error: 'Request not found or not actionable', code: 404 };
+  const adj = rows[0];
+
+  const newStatus = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'needs_correction';
+  await pool.execute(
+    `UPDATE attendance_adjustments SET status=?, admin_note=?, admin_reviewed_by=?, admin_reviewed_at=NOW(), updated_at=NOW() WHERE id=?`,
+    [newStatus, note || null, adminPortalUserId, adj.id]
+  );
+
+  // ── On approval: update / create time entry + recalc OT ────────────
+  if (action === 'approve') {
+    if (adj.type === 'adjust' && adj.time_entry_id) {
+      // Update existing entry
+      const sets = [];
+      const vals = [];
+      if (adj.requested_clock_in)  { sets.push('clock_in=?');  vals.push(toMySQL(adj.requested_clock_in)); }
+      if (adj.requested_clock_out) { sets.push('clock_out=?'); vals.push(toMySQL(adj.requested_clock_out)); }
+      if (sets.length > 0) {
+        vals.push(adj.time_entry_id);
+        await pool.execute(`UPDATE portal_time_entries SET ${sets.join(',')} WHERE id=?`, vals);
+        await recalcOT(pool, adj.time_entry_id, adj.portal_user_id);
+      }
+    } else if (adj.type === 'missing') {
+      // Default the clock-in to the employee's assigned shift start_time (not a
+      // hardcoded 09:00) when the request didn't specify one.
+      let defaultClockIn = `${adj.requested_date} 09:00:00`;
+      try {
+        const [pu] = await pool.execute('SELECT department FROM portal_users WHERE id=?', [adj.portal_user_id]);
+        const dept = pu[0]?.department || null;
+        const [sh] = await pool.execute(
+          `SELECT start_time FROM shifts
+             WHERE is_active=1 AND ((scope='employee' AND scope_id=?) OR (scope='department' AND scope_id=?))
+           ORDER BY (scope='employee') DESC LIMIT 1`,
+          [String(adj.portal_user_id), dept]
+        );
+        if (sh[0]?.start_time) defaultClockIn = `${adj.requested_date} ${sh[0].start_time}`;
+      } catch (_) {}
+
+      // Create new entry
+      const [ins] = await pool.execute(
+        `INSERT INTO portal_time_entries (portal_user_id, clock_in, clock_out, notes)
+         VALUES (?,?,?,?)`,
+        [
+          adj.portal_user_id,
+          adj.requested_clock_in  ? toMySQL(adj.requested_clock_in)  : defaultClockIn,
+          adj.requested_clock_out ? toMySQL(adj.requested_clock_out) : null,
+          'Created via attendance adjustment request',
+        ]
+      );
+      await recalcOT(pool, ins.insertId, adj.portal_user_id);
+      // Link time entry to adjustment for audit trail
+      await pool.execute('UPDATE attendance_adjustments SET time_entry_id=? WHERE id=?', [ins.insertId, adj.id]);
+    }
+  }
+
+  const [updated] = await pool.execute('SELECT * FROM attendance_adjustments WHERE id=?', [adj.id]);
+  const msgText   = buildRequestBlock(updated[0], adj.requester_name, action.replace('_', ' '), note);
+
+  const labelMap = {
+    approve: { txt: 'Approved',         emoji: '✅', type: 'adjustment_approved' },
+    reject:  { txt: 'Rejected',         emoji: '❌', type: 'adjustment_rejected' },
+    needs_correction: { txt: 'Needs Correction', emoji: '🔄', type: 'adjustment_needs_correction' },
+  };
+  const lbl = labelMap[action];
+  await notify(pool, {
+    recipient_user_id: adj.portal_user_id,
+    type: lbl.type,
+    title: `${lbl.emoji} Adjustment ${lbl.txt} by Admin`,
+    body:  note || 'Reviewed by HR/Admin',
+    link:  ADJ_LINK(adj.id),
+    slackText: `${lbl.emoji} ${lbl.txt} — Your attendance adjustment request has been reviewed by HR/Admin.`,
+    slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: msgText } }],
+  });
+
+  await logEvent(pool, {
+    employee_name: adj.requester_name, department: adj.department, role: '',
+    event: `adjustment_${newStatus}`, detail: `Attendance adjustment for ${adj.requested_date} — ${newStatus}`
+  });
+  await recordAuditActor({
+    actorId: actor?.id, actorEmail: actor?.email, actorRole: actor?.role,
+    action: `adjustment.${action}`, target: { type: 'attendance_adjustment', id: adj.id },
+    after: { status: newStatus, via: actor?.via || 'web', note: note || null },
+  });
+  return { ok: true, updated: updated[0], adj, newStatus };
+}
 
 // GET /api/attendance-adjustments/all — admin full history with filters
 router.get('/attendance-adjustments/all', requireAdmin, async (req, res) => {
@@ -411,3 +451,6 @@ router.get('/attendance-adjustments/all', requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+// Shared decision logic, also used by the Slack interactive handlers.
+module.exports.applyTeamLeadAdjustmentDecision = applyTeamLeadAdjustmentDecision;
+module.exports.applyAdminAdjustmentDecision    = applyAdminAdjustmentDecision;
