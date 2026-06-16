@@ -308,10 +308,14 @@ async function maybeSendDailyLeaveReport(tenant) {
   } catch (_) { /* defaults below */ }
   const tz = (countryCode && COUNTRY_TZ[countryCode]) || DEFAULT_TZ;
 
-  // Only fire at the configured hour, local time. The scheduler ticks every
-  // 30 min, so the HH:00–HH:59 window has the two ticks the DB guard de-dupes.
+  // Fire at the configured hour OR LATER the same day (catch-up), local time.
+  // A single exact-hour match was fragile: a deploy/restart that shifts the
+  // 30-min ticks, or an admin setting the hour after it already passed today,
+  // could miss the HH:00–HH:59 window entirely and skip the whole day. Firing
+  // at "hour >= reportHour" together with the DB once-per-day guard means the
+  // report still goes out (slightly late at worst) instead of never.
   const { hour } = nowIn(tz);
-  if (hour !== reportHour) return;
+  if (hour < reportHour) return;
 
   // Tenant-local calendar date (YYYY-MM-DD) and weekday (sun/mon/…).
   const todayLocal = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
