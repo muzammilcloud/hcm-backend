@@ -204,7 +204,8 @@ router.get('/employee/time-entries', requireEmployee, async (req, res) => {
                           THEN TIMESTAMPDIFF(SECOND, pb.break_start, NOW())
                         ELSE pb.duration_seconds END)
         FROM portal_breaks pb WHERE pb.time_entry_id = pte.id
-      ), 0)/3600, 2) AS break_hours
+      ), 0)/3600, 2) AS break_hours,
+      EXISTS(SELECT 1 FROM portal_breaks pbo WHERE pbo.time_entry_id = pte.id AND pbo.break_end IS NULL) AS on_break
       FROM portal_time_entries pte WHERE pte.portal_user_id=?`;
     const params = [req.portalUserId];
     if (from) { query += ' AND DATE(pte.clock_in) >= ?'; params.push(from); }
@@ -214,6 +215,7 @@ router.get('/employee/time-entries', requireEmployee, async (req, res) => {
     const withNet = rows.map((r) => ({
       ...r,
       break_hours: r.break_hours || 0,
+      on_break: !!r.on_break,
       net_hours: Math.max(0, Number(((r.hours || 0) - (r.break_hours || 0)).toFixed(2))),
     }));
     res.json(withNet);
