@@ -6,7 +6,6 @@ const { dmUser, dmRoleInDept, dmAllSysAdmins, notify } = require('../services/no
 const { getBusinessConfig } = require('../config/business');
 const { tenantHas } = require('../services/features');
 const { recordAuditActor } = require('../services/audit');
-const { postToSlack } = require('../services/slack');
 
 // Slack action-button sets reused on adjustment notifications.
 const ADJ_TL_BUTTONS = id => ([
@@ -152,8 +151,6 @@ router.post('/employee/attendance-adjustments', requireEmployee, async (req, res
     }
 
     await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.role, event: 'adjustment_requested', detail: `${type === 'missing' ? 'Missing attendance' : 'Time adjustment'} for ${requested_date}` });
-    // Team-visibility announcement in the attendance channel (non-actionable).
-    try { await postToSlack(`*${pu.name}* (${pu.department}) requested an attendance adjustment for ${requested_date}. Pending review.`); } catch (_) {}
     res.json(adj[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -424,8 +421,6 @@ async function applyAdminAdjustmentDecision(pool, { adjustmentId, action, note, 
     action: `adjustment.${action}`, target: { type: 'attendance_adjustment', id: adj.id },
     after: { status: newStatus, via: actor?.via || 'web', note: note || null },
   });
-  // Team-visibility announcement in the attendance channel (covers web + Slack).
-  try { await postToSlack(`*${adj.requester_name}*'s attendance adjustment (${adj.requested_date}) was *${newStatus.replace('_', ' ')}*.`); } catch (_) {}
   return { ok: true, updated: updated[0], adj, newStatus };
 }
 
