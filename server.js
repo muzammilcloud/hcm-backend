@@ -82,8 +82,9 @@ app.use('/webhooks', polarWebhookRoutes);
 // can be verified against the exact bytes received.
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
-// Slack — parse slash command bodies
-app.use('/api/slack', express.urlencoded({ extended: true }));
+// Slack — parse slash command / interactive bodies, and keep the raw bytes so
+// the per-tenant request-signature (X-Slack-Signature) can be verified.
+app.use('/api/slack', express.urlencoded({ extended: true, verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // Rate limits
 app.use('/api/login',                     authLimiter);

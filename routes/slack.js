@@ -1,5 +1,6 @@
 const express = require('express');
 const axios   = require('axios');
+const crypto  = require('crypto');
 const router  = express.Router({ mergeParams: true });
 const { getDB, logEvent, tenantContext } = require('../db');
 const { getBusinessConfig } = require('../config/business');
@@ -12,8 +13,30 @@ const {
 } = require('../services/slack');
 const { notify } = require('../services/notifications');
 const { recordAuditActor } = require('../services/audit');
+const { getIntegrationConfig } = require('../services/integrations');
 
 const LEAVE_LINK = id => `/leaves?request=${id}`;
+
+// Verify Slack's request signature (HMAC-SHA256 over `v0:timestamp:rawBody`,
+// keyed with the tenant's Signing Secret). Fails OPEN when we genuinely can't
+// verify — no signature header, no captured raw body, or no signing secret
+// configured — so it never blocks a tenant mid-setup. It rejects only a request
+// that DID present a signature we can check and it didn't match (or is stale).
+// Must run inside tenant context so getIntegrationConfig('slack') resolves.
+async function slackSignatureOk(req) {
+  const sig = req.headers['x-slack-signature'];
+  const ts  = req.headers['x-slack-request-timestamp'];
+  const raw = req.rawBody;
+  if (!sig || !ts || !raw) return true;                 // can't verify → allow
+  let secret;
+  try { secret = (await getIntegrationConfig('slack'))?.signing_secret; } catch (_) {}
+  if (!secret) return true;                             // not configured → allow
+  if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false; // replay guard
+  const expected = 'v0=' + crypto.createHmac('sha256', secret)
+    .update(`v0:${ts}:${raw.toString('utf8')}`).digest('hex');
+  try { return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig)); }
+  catch (_) { return false; }
+}
 
 // Slack slash commands all hit a shared host (api.tickin.pro) with no tenant
 // subdomain, so the tenant is carried in the URL: /api/slack/<slug>/<command>
@@ -33,7 +56,12 @@ router.use(async (req, res, next) => {
     }
     return res.status(200).end();
   }
-  tenantContext.run({ dbName: tenant.db_name, slug: tenant.slug, tenantId: tenant.id }, next);
+  tenantContext.run({ dbName: tenant.db_name, slug: tenant.slug, tenantId: tenant.id }, async () => {
+    try {
+      if (!(await slackSignatureOk(req))) return res.status(401).send('Invalid Slack signature');
+    } catch (_) { /* never block on a verification error */ }
+    next();
+  });
 });
 
 // POST /clockin — triggered by /clockin in Slack
