@@ -228,20 +228,25 @@ async function sendDailyLeaveReport(tz = 'Asia/Karachi') {
     // not a hardcoded Asia/Karachi.
     const todayPkt = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); // YYYY-MM-DD
 
+    // NOTE: leave_requests.employee_id references portal_users.id (NOT employees.id).
+    // Joining employees directly matched nothing, hence the old "everyone is in"
+    // bug even with approved leave on the books. Join portal_users; LEFT JOIN
+    // employees only for the emp_code.
     const [rows] = await pool.execute(`
       SELECT
         e.emp_code,
-        e.name,
-        e.department,
+        pu.name,
+        pu.department,
         lr.leave_type,
         lr.duration
       FROM leave_requests lr
-      JOIN employees e ON lr.employee_id = e.id
+      JOIN portal_users pu ON lr.employee_id = pu.id
+      LEFT JOIN employees e ON pu.employee_id = e.id
       WHERE lr.status = 'approved'
         AND lr.leave_type IN (${placeholders})
         AND ? BETWEEN lr.start_date AND lr.end_date
-        AND e.is_active = 1
-      ORDER BY FIELD(lr.leave_type, ${placeholders}), e.name
+        AND pu.status = 'active'
+      ORDER BY FIELD(lr.leave_type, ${placeholders}), pu.name
     `, [...TYPES, todayPkt, ...TYPES]);
 
     const dateLabel = new Date(todayPkt + 'T00:00:00').toLocaleDateString('en-GB', {

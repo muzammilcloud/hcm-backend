@@ -110,7 +110,7 @@ router.post('/employee/clock-out', requireEmployee, async (req, res) => {
     if (puInfo[0]) {
       await logEvent(pool, { employee_name: puInfo[0].name, department: puInfo[0].department, role: puInfo[0].role, event: 'clocked_out', detail: `Clocked out · ${dur}` });
       const timestamp = Math.floor(Date.now() / 1000);
-      await postToSlack(`*${puInfo[0].name}* (${puInfo[0].department}) clocked out at <!date^${timestamp}^{time}|${new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}> — worked *${dur}*`);
+      await postToSlack(`*${puInfo[0].name}* (${puInfo[0].department}) clocked out at <!date^${timestamp}^{time}|${new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })}>`);
     }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -172,12 +172,9 @@ router.post('/employee/break/toggle', requireEmployee, async (req, res) => {
           WHERE id = ?`,
         [openBreak[0].id]
       );
-      // Announce in the attendance channel (same as clock-in/out).
+      // Announce in the attendance channel (same as clock-in/out) — no emoji, no duration.
       if (pu) {
-        const secs = Math.max(0, Math.floor((Date.now() - new Date(openBreak[0].break_start).getTime()) / 1000));
-        const m = Math.floor(secs / 60), s = secs % 60;
-        const dur = m > 0 ? `${m}m ${s}s` : `${s}s`;
-        await postToSlack(`✅ *${pu.name}* (${pu.department}) ended their break after *${dur}*. Work timer resumed.`);
+        await postToSlack(`*${pu.name}* (${pu.department}) ended their break. Work timer resumed.`);
       }
       return res.json({ on_break: false });
     }
@@ -188,7 +185,7 @@ router.post('/employee/break/toggle', requireEmployee, async (req, res) => {
        VALUES (?, ?, NOW(), 'web')`,
       [req.portalUserId, entryId]
     );
-    if (pu) await postToSlack(`☕ *${pu.name}* (${pu.department}) started a break. Work timer paused.`);
+    if (pu) await postToSlack(`*${pu.name}* (${pu.department}) started a break. Work timer paused.`);
     res.json({ on_break: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
