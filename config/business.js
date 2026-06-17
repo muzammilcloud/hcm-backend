@@ -86,6 +86,38 @@ const COUNTRY_TZ = {
   ID: 'Asia/Jakarta',   PH: 'Asia/Manila',      TH: 'Asia/Bangkok',    VN: 'Asia/Ho_Chi_Minh',
   JP: 'Asia/Tokyo',     KR: 'Asia/Seoul',       CN: 'Asia/Shanghai',   HK: 'Asia/Hong_Kong',
   ZA: 'Africa/Johannesburg', NG: 'Africa/Lagos', KE: 'Africa/Nairobi',
+  // ── Extended coverage. Multi-timezone countries use a representative zone;
+  //    tenants there should set an explicit timezone in Settings for precision.
+  // Europe
+  PT: 'Europe/Lisbon',   CH: 'Europe/Zurich',   AT: 'Europe/Vienna',   BE: 'Europe/Brussels',
+  DK: 'Europe/Copenhagen',NO: 'Europe/Oslo',    FI: 'Europe/Helsinki', CZ: 'Europe/Prague',
+  HU: 'Europe/Budapest', RO: 'Europe/Bucharest',GR: 'Europe/Athens',   UA: 'Europe/Kyiv',
+  RU: 'Europe/Moscow',   RS: 'Europe/Belgrade', BG: 'Europe/Sofia',    HR: 'Europe/Zagreb',
+  SK: 'Europe/Bratislava',SI:'Europe/Ljubljana',LT: 'Europe/Vilnius',  LV: 'Europe/Riga',
+  EE: 'Europe/Tallinn',  LU: 'Europe/Luxembourg',IS:'Atlantic/Reykjavik',CY:'Asia/Nicosia',
+  MT: 'Europe/Malta',
+  // Americas
+  CL: 'America/Santiago', CO: 'America/Bogota',  PE: 'America/Lima',    VE: 'America/Caracas',
+  EC: 'America/Guayaquil',BO: 'America/La_Paz',  PY: 'America/Asuncion',UY: 'America/Montevideo',
+  CR: 'America/Costa_Rica',PA:'America/Panama',  GT: 'America/Guatemala',DO:'America/Santo_Domingo',
+  CU: 'America/Havana',  JM: 'America/Jamaica',  TT: 'America/Port_of_Spain', HN: 'America/Tegucigalpa',
+  SV: 'America/El_Salvador',NI:'America/Managua', BZ: 'America/Belize',
+  // Middle East & Central/South Asia
+  IL: 'Asia/Jerusalem',  IQ: 'Asia/Baghdad',    IR: 'Asia/Tehran',     LB: 'Asia/Beirut',
+  YE: 'Asia/Aden',       AF: 'Asia/Kabul',      NP: 'Asia/Kathmandu',  KZ: 'Asia/Almaty',
+  UZ: 'Asia/Tashkent',   AZ: 'Asia/Baku',       GE: 'Asia/Tbilisi',    AM: 'Asia/Yerevan',
+  MV: 'Indian/Maldives', BT: 'Asia/Thimphu',
+  // East & Southeast Asia
+  TW: 'Asia/Taipei',     MN: 'Asia/Ulaanbaatar',MM: 'Asia/Yangon',     KH: 'Asia/Phnom_Penh',
+  LA: 'Asia/Vientiane',  BN: 'Asia/Brunei',
+  // Africa
+  MA: 'Africa/Casablanca',DZ:'Africa/Algiers',  TN: 'Africa/Tunis',    GH: 'Africa/Accra',
+  ET: 'Africa/Addis_Ababa',TZ:'Africa/Dar_es_Salaam',UG:'Africa/Kampala',RW:'Africa/Kigali',
+  CI: 'Africa/Abidjan',  SN: 'Africa/Dakar',    CM: 'Africa/Douala',   ZM: 'Africa/Lusaka',
+  ZW: 'Africa/Harare',   MU: 'Indian/Mauritius',AO: 'Africa/Luanda',   MZ: 'Africa/Maputo',
+  BW: 'Africa/Gaborone', NA: 'Africa/Windhoek',
+  // Oceania
+  FJ: 'Pacific/Fiji',    PG: 'Pacific/Port_Moresby',
 };
 const DEFAULT_TZ = 'Asia/Karachi';
 

@@ -3,7 +3,16 @@ const { sendReportEmail, sendSalarySlipEmail, sendBirthdayReminderEmail, sendBir
 const { postLeaveReportToSlack } = require('./slack');
 const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./otReconciliation');
 const { tenantHas } = require('./features');
-const { getBusinessConfig, COUNTRY_TZ, DEFAULT_TZ, isValidTimezone } = require('../config/business');
+const { getBusinessConfig, COUNTRY_TZ, DEFAULT_TZ, isValidTimezone, getTenantTimezone } = require('../config/business');
+
+// Tenant-local calendar parts (weekday 'mon'…'sun', day-of-month 1–31) in a tz.
+function localParts(tz) {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' })
+    .format(new Date()).toLowerCase().slice(0, 3);
+  const dayOfMonth = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, day: 'numeric' })
+    .format(new Date()));
+  return { weekday, dayOfMonth };
+}
 
 // Read wall-clock hour/minute in a given IANA timezone (server may run in any tz).
 function nowIn(tz) {
@@ -393,47 +402,45 @@ function scheduleReports() {
   // Check every 30 minutes
   setInterval(async () => {
     const now  = new Date();
-    const day  = now.getDay();   // 0=Sun,1=Mon
-    const date = now.getDate();
-    const hour = now.getHours();
+    const hour = now.getHours();   // server-local — used only by platform jobs below
     const min  = now.getMinutes();
 
-    // Each scheduled email/report is per-tenant — wrap the call in
-    // tenant context iteration so getDB() inside the function returns
-    // each tenant's pool in turn.
+    // ── Per-tenant scheduled jobs, evaluated in EACH TENANT'S timezone ──────
+    // One pass over active tenants; every report fires at the tenant's own local
+    // hour (e.g. weekly = Monday 08:00 local), not a fixed server hour. A per
+    // tenant + tenant-local-date guard (firedToday) de-dupes within the window.
+    await forEachActiveTenant('scheduled-reports', async (tenant) => {
+      const pool = await getDB();
+      const tz   = await getTenantTimezone(pool);
+      const { hour: lh } = nowIn(tz);
+      const { weekday, dayOfMonth } = localParts(tz);
+      const fired = (job) => firedToday(`${job}-${tenant.id}`, tz); // marks + dedupes per local day
 
-    if (day === 1 && hour === 8 && min < 30) {
-      await forEachActiveTenant('weekly-report', () => sendWeeklyReports());
-    }
-    // Reconcile the previous month BEFORE monthly reports fire, so the
-    // breakdown is already snapshotted when admins open today's email.
-    // Gated by plan: Starter tenants skip both jobs (monthly_reconciliation
-    // + monthly_reports are Growth-only features).
-    if (date === 1 && hour === 1 && min < 30) {
-      await forEachActiveTenant('monthly-ot-reconciliation', async (tenant) => {
-        if (!tenantHas(tenant, 'monthly_reconciliation')) return;
-        const pool = await getDB();
+      // Reconcile the previous month BEFORE the monthly report (1st, 01:00 local).
+      // Growth-only. Runs first so the snapshot is ready when the email goes out.
+      if (dayOfMonth === 1 && lh === 1 && tenantHas(tenant, 'monthly_reconciliation') && !fired('monthly-ot-recon')) {
         await runOtReconciliationForPreviousMonth(pool);
-      });
-    }
-    if (date === 1 && hour === 8 && min < 30) {
-      await forEachActiveTenant('monthly-report', (tenant) => {
-        if (!tenantHas(tenant, 'monthly_reports')) return;
-        return sendMonthlyReports();
-      });
-    }
-    if (date === 3 && hour === 9 && min < 30) {
-      await forEachActiveTenant('monthly-salary-slips', () => sendMonthlySalarySlips());
-    }
-    if (hour === 8 && min < 30) {
-      await forEachActiveTenant('birthdays', () => checkBirthdays());
-    }
-    // Daily Leave & WFH report — evaluated per tenant: fires once at NOON in the
-    // tenant's local timezone, only on the tenant's working days, and never on a
-    // public holiday. A persistent (DB-backed) once-per-day guard inside
-    // maybeSendDailyLeaveReport replaces the old in-memory check so restarts /
-    // multiple instances can't re-send it.
-    await forEachActiveTenant('daily-leave-report', (tenant) => maybeSendDailyLeaveReport(tenant));
+      }
+      // Weekly report — Monday 08:00 local.
+      if (weekday === 'mon' && lh === 8 && !fired('weekly')) {
+        await sendWeeklyReports();
+      }
+      // Monthly report — 1st, 08:00 local. Growth-only.
+      if (dayOfMonth === 1 && lh === 8 && tenantHas(tenant, 'monthly_reports') && !fired('monthly')) {
+        await sendMonthlyReports();
+      }
+      // Monthly salary slips — 3rd, 09:00 local.
+      if (dayOfMonth === 3 && lh === 9 && !fired('salary-slips')) {
+        await sendMonthlySalarySlips();
+      }
+      // Birthday / anniversary greetings — daily, 08:00 local.
+      if (lh === 8 && !fired('birthdays')) {
+        await checkBirthdays();
+      }
+      // Daily Leave & WFH report — fires at the admin-chosen hour (catch-up),
+      // tenant timezone, working days only. Own DB-backed once-per-day guard.
+      await maybeSendDailyLeaveReport(tenant);
+    });
 
     // Platform-level — runs against the platform DB directly, NOT
     // wrapped in tenant context. Reads tenants table, drops expired DBs.
