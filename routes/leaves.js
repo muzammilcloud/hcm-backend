@@ -477,6 +477,8 @@ router.put('/leave-requests/:id', requireAdmin, async (req, res) => {
           : `❌ *${rows[0].leave_type}* — Your leave request was *declined* by Admin.`,
         slackBlocks: [{ type: 'section', text: { type: 'mrkdwn', text: summary } }],
       });
+      // Team-visibility announcement in the attendance channel.
+      try { await postToSlack(`*${rows[0].employee_name}*'s *${rows[0].leave_type}* (${fmtDate(rows[0].start_date)} → ${fmtDate(rows[0].end_date)}) was *${isApproved ? 'approved' : 'declined'}*.`); } catch (_) {}
     }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -660,6 +662,9 @@ router.post('/employee/leave-request', requireEmployee, async (req, res) => {
           }).catch(() => {});
         }
       }
+      // Team-visibility announcement in the attendance channel (non-actionable;
+      // the approver still gets the private DM with the Approve/Decline buttons).
+      try { await postToSlack(`*${submitter.name}* (${submitter.department}) requested *${leave_type}* — ${start_date} → ${end_date}. Pending approval.`); } catch (_) {}
     }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }

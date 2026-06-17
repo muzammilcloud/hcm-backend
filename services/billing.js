@@ -80,19 +80,13 @@ async function loadTenantById(tenantId) {
   return rows[0] || null;
 }
 
-let _polar = null;
-function getPolar() {
-  if (_polar) return _polar;
-  if (!isConfigured()) return null;
-  // Lazy require so the package can be missing in environments that haven't
-  // run npm install yet (e.g. dev branches) without crashing on import.
-  const { Polar } = require('@polar-sh/sdk');
-  _polar = new Polar({
-    accessToken: POLAR_ACCESS_TOKEN,
-    server: POLAR_ENV === 'production' ? 'production' : 'sandbox',
-  });
-  return _polar;
-}
+// NOTE: the @polar-sh/sdk *API client* is intentionally NOT used. Its pinned
+// version (0.34) does strict response validation that throws on the seat_based
+// pricing fields Polar returns for Growth/Business — the bug that broke both
+// checkout and plan changes. Every Polar call in this file goes through the
+// REST helper polarApi() below instead, so there is no SDK code path that can
+// hit that validation. (Webhook signature verification uses the separate,
+// safe @polar-sh/sdk/webhooks sub-module in routes/webhooks/polar.js.)
 
 // Direct Polar REST calls. We bypass the SDK for subscription reads + mutations
 // because the pinned SDK (0.34) does strict response validation that throws on

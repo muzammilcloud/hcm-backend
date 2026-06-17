@@ -390,6 +390,8 @@ router.post('/interactive', async (req, res) => {
         action: `leave.${approved ? 'approved' : 'declined'}`, target: { type: 'leave_request', id: leaveId },
         after: { status: finalStatus, via: 'slack' },
       });
+      // Team-visibility announcement in the attendance channel.
+      try { await postToSlack(`*${lr.employee_name}*'s *${lr.leave_type}* (${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)}) was *${approved ? 'approved' : 'declined'}*.`); } catch (_) {}
 
       // Collapse the admin's message so the buttons can't be clicked twice.
       await replace(`${approved ? '✅ Approved' : '❌ Declined'} — *${lr.leave_type}* for *${lr.employee_name}* (${fmtDate(lr.start_date)} → ${fmtDate(lr.end_date)}). The employee has been notified.`);
