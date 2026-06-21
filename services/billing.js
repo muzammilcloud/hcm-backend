@@ -645,7 +645,30 @@ async function changePlan(tenant, { tier, cycle = 'monthly' }) {
   // syncSeatCount / enforceSeatMinimum, so we don't push seats here.
   // NOTE: add-ons in the new single-product model are handled via their own
   // checkout/subscription, not as extra lines on the base subscription.
-  await polarApi('PATCH', `/v1/subscriptions/${tenant.polar_subscription_id}`, { product_id: newProductId });
+  let subId = tenant.polar_subscription_id;
+  try {
+    await polarApi('PATCH', `/v1/subscriptions/${subId}`, { product_id: newProductId });
+  } catch (e) {
+    // A 404 means the stored subscription id doesn't exist in THIS Polar
+    // environment — almost always a leftover sandbox id from testing before
+    // the production cutover. Reconcile against Polar to find the tenant's real
+    // current subscription, then retry once. If there genuinely isn't one,
+    // surface a clear message instead of a raw "HTTP 404".
+    if (e?.status === 404) {
+      const recon = await reconcileSubscription(tenant).catch(() => null);
+      if (recon?.reconciled && recon.subscription_id && recon.subscription_id !== subId) {
+        subId = recon.subscription_id;
+        await polarApi('PATCH', `/v1/subscriptions/${subId}`, { product_id: newProductId });
+      } else {
+        // No live subscription for this tenant — clear the stale id so the UI
+        // falls back to the subscribe flow.
+        try { await getPlatformDB().execute('UPDATE tenants SET polar_subscription_id = NULL WHERE id = ?', [tenant.id]); } catch (_) {}
+        throw new Error('We could not find an active subscription for this workspace in Polar. Please subscribe again to switch plans.');
+      }
+    } else {
+      throw e;
+    }
+  }
 
   // Mirror the new tier/cycle locally so the UI updates immediately. Polar will
   // also fire subscription.updated; reconcile/the webhook keep us authoritative.
