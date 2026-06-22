@@ -69,6 +69,9 @@ async function initTenantSchema(poolArg) {
   try { await pool.execute(`ALTER TABLE employees ADD COLUMN marital_status ENUM('Single','Married','Divorced','Widowed') DEFAULT 'Single'`); } catch (_) {}
   try { await pool.execute(`UPDATE employees SET marital_status='Single' WHERE marital_status IS NULL`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE employees ADD COLUMN employment_status ENUM('probation','permanent') DEFAULT 'probation'`); } catch (_) {}
+  // Widen to include 'intern'. Safe: only adds a new option. Interns get the
+  // same (base-tier) leave eligibility as probation — see getEligibleLeaveTypes.
+  try { await pool.execute(`ALTER TABLE employees MODIFY COLUMN employment_status ENUM('probation','permanent','intern') DEFAULT 'probation'`); } catch (_) {}
   try { await pool.execute(`ALTER TABLE employees ADD COLUMN reports_to INT DEFAULT NULL`); } catch (_) {}
 
   // Link Muzammil (QK-1149), Anosha (QK-1138), Laiba (QK-1144) portal users → employee records
@@ -185,6 +188,9 @@ async function initTenantSchema(poolArg) {
   // the country-derived zone for all scheduling + "today" math. NULL = derive
   // from country_code (back-compat for existing tenants).
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN timezone VARCHAR(64) NULL DEFAULT NULL`); } catch (_) {}
+  // Day of week the weekly email digest goes out (lowercase 3-letter key:
+  // mon..sun). Default 'mon'. Fires at 08:00 in the workspace timezone.
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN weekly_report_day VARCHAR(3) NOT NULL DEFAULT 'mon'`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}

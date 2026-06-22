@@ -59,8 +59,18 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       company_name, company_address, company_logo_url,
       slip_title, slip_signatory_name, slip_signatory_title,
       daily_working_hours, working_days, monthly_required_hours_override,
-      daily_report_hour, timezone,
+      daily_report_hour, timezone, weekly_report_day,
     } = req.body || {};
+
+    // Weekly email-digest day (mon..sun). Optional.
+    let nextWeeklyDay = null;
+    if (weekly_report_day != null && weekly_report_day !== '') {
+      const d = String(weekly_report_day).toLowerCase().slice(0, 3);
+      if (!DAY_KEYS.includes(d)) {
+        return res.status(400).json({ error: 'weekly_report_day must be one of: ' + DAY_KEYS.join(', ') });
+      }
+      nextWeeklyDay = d;
+    }
 
     // Daily Leave & WFH report send hour (0–23, tenant-local). Optional.
     let nextReportHour = null;
@@ -155,6 +165,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
          daily_working_hours  = COALESCE(?, daily_working_hours),
          working_days         = COALESCE(?, working_days),
          daily_report_hour    = COALESCE(?, daily_report_hour),
+         weekly_report_day    = COALESCE(?, weekly_report_day),
          monthly_required_hours_override = ${nextMonthlyOverride === undefined ? 'monthly_required_hours_override' : '?'}
        WHERE singleton_key = 1`,
       [
@@ -169,6 +180,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
         nextDailyHours,
         nextWorkingDays,
         nextReportHour,
+        nextWeeklyDay,
         ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
       ]
     );

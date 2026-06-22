@@ -5,6 +5,8 @@ const { runForPreviousMonth: runOtReconciliationForPreviousMonth } = require('./
 const { tenantHas } = require('./features');
 const { getBusinessConfig, COUNTRY_TZ, DEFAULT_TZ, isValidTimezone, getTenantTimezone } = require('../config/business');
 
+const DAY_KEYS_SET = new Set(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
+
 // Tenant-local calendar parts (weekday 'mon'…'sun', day-of-month 1–31) in a tz.
 function localParts(tz) {
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' })
@@ -433,13 +435,21 @@ function scheduleReports() {
       const { weekday, dayOfMonth } = localParts(tz);
       const fired = (job) => firedToday(`${job}-${tenant.id}`, tz); // marks + dedupes per local day
 
+      // Admin-chosen weekly-digest day (mon..sun), default 'mon'.
+      let weeklyDay = 'mon';
+      try {
+        const [w] = await pool.execute('SELECT weekly_report_day FROM tenant_settings WHERE singleton_key = 1 LIMIT 1');
+        const d = String(w[0]?.weekly_report_day || '').toLowerCase();
+        if (DAY_KEYS_SET.has(d)) weeklyDay = d;
+      } catch (_) {}
+
       // Reconcile the previous month BEFORE the monthly report (1st, 01:00 local).
       // Growth-only. Runs first so the snapshot is ready when the email goes out.
       if (dayOfMonth === 1 && lh === 1 && tenantHas(tenant, 'monthly_reconciliation') && !fired('monthly-ot-recon')) {
         await runOtReconciliationForPreviousMonth(pool);
       }
-      // Weekly report — Monday 08:00 local.
-      if (weekday === 'mon' && lh === 8 && !fired('weekly')) {
+      // Weekly report — admin-chosen day, 08:00 local (default Monday).
+      if (weekday === weeklyDay && lh === 8 && !fired('weekly')) {
         await sendWeeklyReports();
       }
       // Monthly report — 1st, 08:00 local. Growth-only.
