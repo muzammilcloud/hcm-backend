@@ -140,4 +140,48 @@ router.post('/employee/reset-password', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /api/me/password — change your own password while logged in.
+// Works for ANY portal user (employee, team-lead, sys-admin) — they all share
+// portal_sessions/portal_users, and requireEmployee accepts any valid session.
+router.post('/me/password', requireEmployee, async (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Current and new password are required' });
+  }
+  if (new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  }
+  try {
+    const pool = await getDB();
+    const [rows] = await pool.execute('SELECT * FROM portal_users WHERE id = ?', [req.portalUserId]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const pu = rows[0];
+
+    // No usable password yet (invited-but-never-activated): treat as misuse.
+    if (!pu.password_hash) return res.status(400).json({ error: 'Password not set for this account' });
+
+    const { ok } = verifyPassword(current_password, pu.password_hash);
+    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' });
+
+    if (verifyPassword(new_password, pu.password_hash).ok) {
+      return res.status(400).json({ error: 'New password must be different from the current one' });
+    }
+
+    // Rotate the password and revoke OTHER sessions so a stale/compromised
+    // session can't keep using the old credential. The caller's current token
+    // stays valid (excluded), so they aren't logged out mid-change.
+    await pool.execute('UPDATE portal_users SET password_hash = ? WHERE id = ?', [hashPassword(new_password), pu.id]);
+    const callerToken = req.headers['authorization']?.replace('Bearer ', '');
+    try {
+      await pool.execute(
+        'DELETE FROM portal_sessions WHERE portal_user_id = ? AND token <> ?',
+        [pu.id, callerToken || '']
+      );
+    } catch (_) { /* session cleanup is best-effort */ }
+
+    await logEvent(pool, { employee_name: pu.name, department: pu.department, role: pu.portal_role, event: 'password_changed', detail: 'Password changed from dashboard' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
