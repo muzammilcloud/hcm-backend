@@ -4,7 +4,21 @@ const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { CURRENCIES, COUNTRIES, COUNTRY_DEFAULT_CURRENCY } = require('../services/locales');
 const { getPreset } = require('../services/taxModules');
-const { DAY_KEYS, parseWorkingDays, isValidTimezone, COUNTRY_TZ } = require('../config/business');
+const { DAY_KEYS, parseWorkingDays, isValidTimezone, COUNTRY_TZ, getTenantTimezone } = require('../config/business');
+
+// POST /api/settings/daily-report/test — send the daily Leave & WFH report NOW,
+// in the tenant's resolved timezone, bypassing the once-a-day schedule guard.
+// Lets an admin verify the Slack webhook + format on demand without waiting for
+// the scheduled hour.
+router.post('/settings/daily-report/test', requireAdmin, async (req, res, next) => {
+  try {
+    const pool = await getDB();
+    const tz = await getTenantTimezone(pool);
+    const { sendDailyLeaveReport } = require('../services/scheduler');
+    await sendDailyLeaveReport(tz);
+    res.json({ ok: true, timezone: tz });
+  } catch (e) { next(e); }
+});
 
 // GET /api/settings/locales — public lists for the picker UI
 router.get('/settings/locales', (req, res) => {
