@@ -4,7 +4,7 @@ const { getDB } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { CURRENCIES, COUNTRIES, COUNTRY_DEFAULT_CURRENCY } = require('../services/locales');
 const { getPreset } = require('../services/taxModules');
-const { DAY_KEYS, parseWorkingDays, isValidTimezone } = require('../config/business');
+const { DAY_KEYS, parseWorkingDays, isValidTimezone, COUNTRY_TZ } = require('../config/business');
 
 // GET /api/settings/locales — public lists for the picker UI
 router.get('/settings/locales', (req, res) => {
@@ -12,6 +12,9 @@ router.get('/settings/locales', (req, res) => {
     currencies: CURRENCIES,
     countries:  COUNTRIES,
     country_default_currency: COUNTRY_DEFAULT_CURRENCY,
+    // country → representative IANA timezone, so the FE can auto-pick a sensible
+    // zone when the admin chooses a country (they can still override it).
+    country_timezone: COUNTRY_TZ,
   });
 });
 
