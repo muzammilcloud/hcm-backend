@@ -253,48 +253,60 @@ async function sendDailyLeaveReport(tz = 'Asia/Karachi') {
       day: '2-digit', month: 'long', year: 'numeric',
     }); // "04 May 2026"
 
+    const durLabel = (d) => d === 'half_am' ? '½ AM' : d === 'half_pm' ? '½ PM' : 'Full day';
+
+    // ── Nobody out: a clean confirmation card ──────────────────────────────
     if (rows.length === 0) {
-      const text = `*📊 Daily Leave & WFH Report — ${dateLabel}*\n\nEveryone is in today. No approved leave or WFH requests on the books for the day.`;
-      await postLeaveReportToSlack(text);
+      const blocks = [
+        { type: 'header', text: { type: 'plain_text', text: `📊  Daily Leave & WFH — ${dateLabel}`, emoji: true } },
+        { type: 'section', text: { type: 'mrkdwn', text: '✅  *Everyone is in today.*\nNo approved leave or WFH on the books.' } },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: 'Tickin · daily attendance summary' }] },
+      ];
+      await postLeaveReportToSlack(`Daily Leave & WFH — ${dateLabel}: everyone is in today.`, blocks);
       console.log('📊 Daily report sent (no leaves/WFH today).');
       return;
     }
 
-    // Group by leave_type, preserving the TYPES order.
+    // Group by leave_type (preserve TYPES order), then flatten for the table.
     const grouped = {};
-    for (const r of rows) {
-      (grouped[r.leave_type] ||= []).push(r);
-    }
+    for (const r of rows) (grouped[r.leave_type] ||= []).push(r);
+    const ordered = [];
+    for (const type of TYPES) for (const r of (grouped[type] || [])) ordered.push({ ...r, _type: type });
 
-    // Slack mrkdwn message: header + per-type sections + summary.
-    const sections = [];
-    for (const type of TYPES) {
-      const list = grouped[type];
-      if (!list || list.length === 0) continue;
-      const lines = list.map(r => {
-        const code = r.emp_code || '—';
-        const half = r.duration === 'half_am' ? '  _(½ AM)_'
-                   : r.duration === 'half_pm' ? '  _(½ PM)_'
-                   : '';
-        return `• \`${code}\`  ${r.name} — ${r.department}${half}`;
-      });
-      sections.push(`*${type}* (${list.length})\n${lines.join('\n')}`);
-    }
+    // Build an aligned, fixed-width table — renders as a real table inside a
+    // Slack code block (monospace). Columns auto-size to content, capped so the
+    // message stays readable on mobile; long values are ellipsised.
+    const headers  = ['EMPLOYEE', 'DEPARTMENT', 'TYPE', 'WHEN'];
+    const dataRows = ordered.map(r => [
+      String(r.name || '—'),
+      String(r.department || '—'),
+      String(r._type),
+      durLabel(r.duration),
+    ]);
+    const CAP   = [22, 16, 14, 9];
+    const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+    const widths = headers.map((h, i) =>
+      Math.min(CAP[i], Math.max(h.length, ...dataRows.map(row => row[i].length))));
+    const fmtRow = (cells) => cells.map((c, i) => trunc(c, widths[i]).padEnd(widths[i])).join('   ');
+    const sep    = widths.map(w => '─'.repeat(w)).join('───');
+    const table  = [fmtRow(headers), sep, ...dataRows.map(fmtRow)].join('\n');
 
-    const summary = TYPES
-      .filter(t => grouped[t]?.length)
-      .map(t => `${t}: ${grouped[t].length}`)
-      .join('  ·  ');
+    const summary = TYPES.filter(t => grouped[t]?.length)
+      .map(t => `${t}: *${grouped[t].length}*`).join('   ·   ');
 
-    const text = [
-      `*📊 Daily Leave & WFH Report — ${dateLabel}*`,
-      '',
-      sections.join('\n\n'),
-      '',
-      `_Summary — ${summary}  ·  Total ${rows.length}_`,
-    ].join('\n');
+    const blocks = [
+      { type: 'header',  text: { type: 'plain_text', text: `📊  Daily Leave & WFH — ${dateLabel}`, emoji: true } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `*${rows.length}* ${rows.length === 1 ? 'person is' : 'people are'} out today` }] },
+      { type: 'divider' },
+      { type: 'section', text: { type: 'mrkdwn', text: '```\n' + table + '\n```' } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `${summary}   ·   Total *${rows.length}*` }] },
+    ];
 
-    await postLeaveReportToSlack(text);
+    // Plain-text fallback for notifications / clients that don't render blocks.
+    const fallback = `Daily Leave & WFH — ${dateLabel}\n` +
+      ordered.map(r => `• ${r.name} (${r.department}) — ${r._type} [${durLabel(r.duration)}]`).join('\n');
+
+    await postLeaveReportToSlack(fallback, blocks);
     console.log(`📊 Daily report sent — ${rows.length} on leave/WFH today.`);
   } catch (e) {
     console.error('Daily leave report error:', e.message);
