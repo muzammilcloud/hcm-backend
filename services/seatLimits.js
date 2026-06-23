@@ -13,20 +13,26 @@ const { getDB, getPlatformDB } = require('../db');
 // reasonable behavior.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// No seat caps on any current plan — Starter and Growth are both unlimited
-// (billed per actual seat, no minimum and no maximum). The infrastructure
-// below stays in place for future per-tenant caps (e.g. lifetime/AppSumo
-// tiers), but every plan here resolves to null = unlimited.
+// The paid plans (Starter, Growth) are unlimited — billed per actual seat, no
+// minimum and no maximum. The FREE plan is the only capped tier: a hard stop at
+// exactly 10 active employees (no grace), the upgrade trigger to a paid plan.
 const SOFT_LIMITS = {
+  free:     10,   // free-forever — hard cap at 10 employees (see hardCapFor)
   starter:  null, // unlimited
   growth:   null, // unlimited — no maximum seat cap
   business: null, // unlimited
-  demo:     null, // trials evaluate at full scale
+  demo:     null, // legacy trials evaluate at full scale
   trial:    null,
   paid:     null, // legacy "paid" → unlimited
 };
 
 const HARD_RATIO = 1.6;
+// Free hard-stops at exactly its limit (no grace); other capped plans, if any,
+// get a small grace band above the soft limit.
+function hardCapFor(plan, soft) {
+  if (soft == null) return null;
+  return plan === 'free' ? soft : Math.floor(soft * HARD_RATIO);
+}
 function hardCap(soft) {
   return soft == null ? null : Math.floor(soft * HARD_RATIO);
 }
@@ -58,7 +64,7 @@ async function checkSeatLimit(req) {
   }
   const plan = await getTenantPlan(tenantId);
   const softLimit = SOFT_LIMITS[plan];
-  const hard = hardCap(softLimit);
+  const hard = hardCapFor(plan, softLimit);
   const current = await getCurrentSeatCount();
   return {
     plan,

@@ -47,10 +47,11 @@ const GROWTH_FEATURES = new Set([
 ]);
 
 const FEATURES = {
+  free:     STARTER_FEATURES,  // free-forever plan — same features as Starter, capped at 10 employees
   starter:  STARTER_FEATURES,
   growth:   GROWTH_FEATURES,
   business: GROWTH_FEATURES,   // alias — Business carries the same shipped feature set today
-  demo:     GROWTH_FEATURES,   // trials get the full evaluation experience
+  demo:     GROWTH_FEATURES,   // legacy trials got the full evaluation experience
   trial:    GROWTH_FEATURES,   // legacy alias
 };
 

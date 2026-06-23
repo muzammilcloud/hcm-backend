@@ -156,8 +156,8 @@ async function provisionTenant({
   companyName,
   contactEmail,
   adminName,
-  plan = 'demo',
-  trialTier = null,   // 'starter' | 'growth' — which tier this trial evaluates
+  plan = 'free',      // new tenants start on the free-forever plan (no trial)
+  trialTier = null,   // legacy: only set for old demo trials
 }) {
   if (!isValidSlug(slug))    throw Object.assign(new Error('Invalid subdomain'), { code: 'INVALID_SLUG' });
   if (isReservedSlug(slug))  throw Object.assign(new Error('That subdomain is reserved'), { code: 'RESERVED_SLUG' });

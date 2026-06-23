@@ -87,8 +87,7 @@ router.post('/signup', async (req, res, next) => {
       companyName:   company,
       contactEmail:  email.trim().toLowerCase(),
       adminName,
-      plan:          'demo',
-      trialTier,
+      plan:          'free',
     });
 
     await platform.execute(

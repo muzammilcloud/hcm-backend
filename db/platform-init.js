@@ -127,11 +127,12 @@ async function initPlatformDB() {
   for (const clause of tenantBillingColumns) {
     try { await db.execute(`ALTER TABLE tenants ${clause}`); } catch (_) { /* already exists */ }
   }
-  // Widen the legacy plan enum to add 'starter'/'growth'/'business' alongside
-  // the existing demo/trial/paid values. Safe because we only add new options.
+  // Widen the plan enum: add 'free' (the free-forever default for new signups)
+  // alongside the paid tiers and the legacy demo/trial/paid values. Safe because
+  // we only add new options. Default is now 'free' — new tenants start free.
   try {
     await db.execute(
-      `ALTER TABLE tenants MODIFY COLUMN plan ENUM('demo','trial','paid','starter','growth','business') NOT NULL DEFAULT 'starter'`
+      `ALTER TABLE tenants MODIFY COLUMN plan ENUM('free','demo','trial','paid','starter','growth','business') NOT NULL DEFAULT 'free'`
     );
   } catch (_) { /* already correct */ }
   try { await db.execute(`ALTER TABLE tenants ADD INDEX idx_tenants_polar_sub (polar_subscription_id)`); } catch (_) {}
