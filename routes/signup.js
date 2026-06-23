@@ -44,9 +44,12 @@ router.post('/signup', async (req, res, next) => {
     const {
       firstName, lastName, email, company, slug: requestedSlug, teamSize, plan: chosenPlan,
     } = req.body || {};
-    // Which tier the trial evaluates. Anything but 'starter' falls back to the
-    // full-feature Growth trial (the long-standing default).
-    const trialTier = String(chosenPlan).toLowerCase() === 'starter' ? 'starter' : 'growth';
+    // Plan chosen on the signup form. Free is the baseline; Starter/Growth
+    // continue to checkout — the tenant is created on free and upgraded by the
+    // billing webhook once payment completes (abandon = stays free, capped 10).
+    const wantedPlan = ['starter', 'growth'].includes(String(chosenPlan).toLowerCase())
+      ? String(chosenPlan).toLowerCase()
+      : 'free';
 
     // Validate
     const errors = [];
@@ -122,6 +125,26 @@ router.post('/signup', async (req, res, next) => {
       } catch (_) {}
     }
 
+    // Paid plan chosen → create a Polar checkout so they can pay now. The
+    // workspace was provisioned on 'free'; the billing webhook upgrades it to
+    // the paid tier once checkout completes. If billing isn't configured or the
+    // call fails, we fall back to the free workspace (upgradeable in-app later).
+    let checkoutUrl = null;
+    if (wantedPlan !== 'free') {
+      try {
+        const { createCheckout, isConfigured } = require('../services/billing');
+        if (isConfigured()) {
+          const co = await createCheckout(
+            { id: result.tenantId, slug: result.slug, contact_email: email.trim().toLowerCase() },
+            { tier: wantedPlan, cycle: 'monthly', successUrl: result.setPasswordUrl }
+          );
+          checkoutUrl = co?.url || null;
+        }
+      } catch (e) {
+        console.error('[signup] checkout creation failed:', e.message);
+      }
+    }
+
     res.status(201).json({
       ok: true,
       slug: result.slug,
@@ -129,6 +152,8 @@ router.post('/signup', async (req, res, next) => {
       setPasswordUrl: result.setPasswordUrl, // lets the user finish even if email fails
       email,
       emailSent,                              // true | false | null (still sending)
+      plan: wantedPlan,
+      checkoutUrl,                            // set for paid plans → FE redirects to pay
       trialEndsAt: result.trialEndsAt,
     });
   } catch (e) {
