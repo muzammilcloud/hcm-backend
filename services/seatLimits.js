@@ -13,13 +13,17 @@ const { getDB, getPlatformDB } = require('../db');
 // reasonable behavior.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// No seat caps on any current plan — Starter and Growth are both unlimited
+// (billed per actual seat, no minimum and no maximum). The infrastructure
+// below stays in place for future per-tenant caps (e.g. lifetime/AppSumo
+// tiers), but every plan here resolves to null = unlimited.
 const SOFT_LIMITS = {
-  starter:  null, // unlimited — Starter has no employee/seat cap
-  growth:   100,
+  starter:  null, // unlimited
+  growth:   null, // unlimited — no maximum seat cap
   business: null, // unlimited
   demo:     null, // trials evaluate at full scale
   trial:    null,
-  paid:     null, // legacy "paid" → treat as unlimited until migrated
+  paid:     null, // legacy "paid" → unlimited
 };
 
 const HARD_RATIO = 1.6;
