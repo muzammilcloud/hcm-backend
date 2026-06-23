@@ -5,7 +5,7 @@ const {
   slugify, isValidSlug, isReservedSlug, isSlugAvailable, findFreeSlug,
   provisionTenant, audit,
 } = require('../services/tenant');
-const { sendInviteEmail } = require('../services/email');
+const { sendInviteEmail, sendWorkspaceFinderEmail } = require('../services/email');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -220,6 +220,33 @@ router.get('/tenant/whoami', async (req, res) => {
     current_period_end:    t.current_period_end || null,
     access_restricted: accessRestricted,
   });
+});
+
+// POST /api/find-workspace — "I forgot my workspace URL" recovery.
+// Looks up active workspaces owned by this signup email and emails the sign-in
+// link(s). The response is ALWAYS generic ({ ok: true }) so it can't be used to
+// probe whether an email has an account.
+router.post('/find-workspace', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address' });
+
+    const platform = getPlatformDB();
+    const [rows] = await platform.execute(
+      `SELECT slug, company_name FROM tenants
+       WHERE LOWER(contact_email) = ? AND status IN ('active', 'provisioning') AND deleted_at IS NULL
+       ORDER BY created_at DESC LIMIT 10`,
+      [email]
+    );
+    if (rows.length) {
+      try { await sendWorkspaceFinderEmail({ to: email, workspaces: rows }); }
+      catch (e) { console.error('[find-workspace] email failed:', e.message); }
+    }
+  } catch (e) {
+    console.error('[find-workspace] failed:', e.message);
+  }
+  // Generic response regardless of outcome — no account enumeration.
+  return res.json({ ok: true });
 });
 
 module.exports = router;

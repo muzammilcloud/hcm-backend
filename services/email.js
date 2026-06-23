@@ -240,6 +240,42 @@ async function sendPasswordResetEmail({ name, email, resetToken }) {
   }
 }
 
+// "Find your workspace" recovery: emails the sign-in URL(s) for the workspaces
+// a given email owns. Sent only when a match exists; the API response stays
+// generic so this can't be used to enumerate accounts.
+async function sendWorkspaceFinderEmail({ to, workspaces = [] }) {
+  const links = workspaces.map((w) => {
+    const url = `https://${w.slug}.tickin.pro`;
+    return `<a href="${url}" style="display:block;background:#4f46e5;color:#fff;text-align:center;padding:14px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;margin-bottom:10px;">${w.company_name || w.slug} &rarr; ${w.slug}.tickin.pro</a>`;
+  }).join('');
+  const html = `
+    <!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+    <body style="margin:0;padding:0;background:#020617;font-family:'Segoe UI',sans-serif;">
+      <div style="max-width:520px;margin:40px auto;background:#0f172a;border-radius:16px;overflow:hidden;border:1px solid #1e293b;">
+        <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);padding:32px;text-align:center;">
+          <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">Your Tickin workspace</h1>
+          <p style="margin:8px 0 0;color:#c7d2fe;font-size:14px;">Sign in below</p>
+        </div>
+        <div style="padding:32px;">
+          <p style="color:#94a3b8;font-size:15px;margin:0 0 20px;">You asked us to help you find your workspace. Here ${workspaces.length === 1 ? 'it is' : 'they are'}:</p>
+          ${links}
+          <p style="color:#475569;font-size:12px;margin:20px 0 0;text-align:center;">If you didn't request this, you can safely ignore this email.</p>
+        </div>
+        <div style="background:#090e1a;padding:16px;text-align:center;border-top:1px solid #1e293b;">
+          <p style="margin:0;color:#334155;font-size:12px;">Tickin · Modern HR Platform</p>
+        </div>
+      </div>
+    </body></html>`;
+  try {
+    await transporter.sendMail({ from: await getFromAddress(), to, subject: 'Your Tickin workspace', html });
+    console.log(`✅ Workspace finder email sent to ${to}`);
+    return true;
+  } catch (e) {
+    console.error(`❌ Workspace finder email failed to ${to}:`, e.message);
+    return false;
+  }
+}
+
 async function sendSalarySlipEmail(employee, slip, monthLabel, settings = {}) {
   // Drive currency / company / title / signatory from the tenant settings,
   // falling back to the legacy Pakistan defaults.
@@ -630,6 +666,7 @@ module.exports = {
   sendLeaveStatusEmail,
   sendReportEmail,
   sendPasswordResetEmail,
+  sendWorkspaceFinderEmail,
   sendSalarySlipEmail,
   sendBirthdayReminderEmail,
   sendBirthdayGreetingEmail,
