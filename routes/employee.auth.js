@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getDB, hashPassword, verifyPassword, generateToken, logEvent } = require('../db');
 const { requireEmployee } = require('../middleware/auth');
 const { sendPasswordResetEmail } = require('../services/email');
+const { allowsMultipleSessions } = require('../services/tenant');
 
 // GET /api/invite/:token
 router.get('/invite/:token', async (req, res) => {
@@ -39,7 +40,9 @@ router.post('/invite/:token/set-password', async (req, res) => {
 
     const token     = generateToken();
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    if (!allowsMultipleSessions(req.tenant)) {
+      await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    }
     await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
 
     const portalRole = pu.portal_role || 'employee';
@@ -71,7 +74,9 @@ router.post('/employee/login', async (req, res, next) => {
     const portalRole = pu.portal_role || 'employee';
     const token      = generateToken();
     const expiresAt  = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    if (!allowsMultipleSessions(req.tenant)) {
+      await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    }
     await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
 
     res.json({ token, expires_at: expiresAt, role: portalRole, employee: { id: pu.id, name: pu.name, email: pu.email, role: pu.role, department: pu.department, portal_role: portalRole } });

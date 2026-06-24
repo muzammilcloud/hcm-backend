@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { getDB, hashPassword, verifyPassword, generateToken } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { allowsMultipleSessions } = require('../services/tenant');
 
 // POST /api/login/unified — single entry point for all roles
 router.post('/login/unified', async (req, res, next) => {
@@ -27,7 +28,11 @@ router.post('/login/unified', async (req, res, next) => {
         const portalRole = pu.portal_role || 'employee';
         const token      = generateToken();
         const expiresAt  = new Date(Date.now() + 8 * 60 * 60 * 1000);
-        await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+        // Single active session per user, unless the tenant allows multiple
+        // (e.g. qa-starter) — then keep prior sessions alive.
+        if (!allowsMultipleSessions(req.tenant)) {
+          await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+        }
         await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
         return res.json({
           token, expires_at: expiresAt,

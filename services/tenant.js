@@ -41,6 +41,27 @@ const PLATFORM_SUBDOMAINS = new Set([
   'ftp', 'sftp', 'smtp', 'ns', 'ns1', 'ns2', 'mx', 'webmail', 'email',
 ]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-session tenants
+//
+// Default behaviour is ONE active session per user: each successful login
+// revokes the user's prior sessions, so signing in on a second device logs the
+// first out. Tenants listed here opt out, letting the same account stay logged
+// in from several devices/tabs at once. qa-starter does so for QA (driving
+// multiple roles/devices in parallel). Override via MULTI_SESSION_SLUGS
+// (comma-separated slugs).
+// ─────────────────────────────────────────────────────────────────────────────
+const MULTI_SESSION_SLUGS = new Set(
+  (process.env.MULTI_SESSION_SLUGS || 'qa-starter')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+);
+
+// Accepts a tenant object ({ slug }) or a raw slug string.
+function allowsMultipleSessions(tenantOrSlug) {
+  const slug = typeof tenantOrSlug === 'string' ? tenantOrSlug : (tenantOrSlug?.slug || '');
+  return MULTI_SESSION_SLUGS.has(String(slug).toLowerCase().trim());
+}
+
 function isPlatformSubdomain(slug) {
   return typeof slug === 'string' && PLATFORM_SUBDOMAINS.has(slug);
 }
@@ -388,6 +409,9 @@ module.exports = {
   slugify, isValidSlug, isReservedSlug, isSlugAvailable, findFreeSlug,
   isPlatformSubdomain,
   RESERVED_SUBDOMAINS, PLATFORM_SUBDOMAINS,
+
+  // sessions
+  allowsMultipleSessions,
 
   // lookup
   getTenantBySlug, getTenantById, listTenants,

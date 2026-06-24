@@ -4,6 +4,7 @@ const crypto  = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const { getDB, getPlatformDB, generateToken, tenantContext } = require('../db');
 const { recordAudit } = require('../services/audit');
+const { allowsMultipleSessions } = require('../services/tenant');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Google Sign-In — two flows live in this file:
@@ -268,7 +269,9 @@ router.get('/auth/google/callback', async (req, res) => {
 
             const sessionToken = generateToken();
             const expiresAt    = new Date(Date.now() + 8 * 60 * 60 * 1000);
-            await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+            if (!allowsMultipleSessions(tenant)) {
+              await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+            }
             await pool.execute(
               'INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)',
               [pu.id, sessionToken, expiresAt]
@@ -378,7 +381,9 @@ router.post('/auth/google/verify', async (req, res) => {
 
     const token     = generateToken();
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    if (!allowsMultipleSessions(req.tenant)) {
+      await pool.execute('DELETE FROM portal_sessions WHERE portal_user_id = ?', [pu.id]);
+    }
     await pool.execute('INSERT INTO portal_sessions (portal_user_id, token, expires_at) VALUES (?, ?, ?)', [pu.id, token, expiresAt]);
 
     recordAudit(
