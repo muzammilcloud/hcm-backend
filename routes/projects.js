@@ -26,6 +26,19 @@ const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch
 
 const actorOf = (req) => ({ id: Number(req.portalUserId), role: req.portalRole });
 
+// Load a project + the actor's membership, then require FULL task control
+// (create/edit/delete/reassign tasks, project comments). Limited employee
+// members (allow_member_tasks off) are rejected here and handled separately for
+// the status/comment-on-assigned-task path.
+async function requireTaskControl(pool, actor, projectId, msg) {
+  const project = await P.loadProject(pool, projectId);
+  const member = await P.isMember(pool, projectId, actor.id);
+  if (!P.fullTaskControl(actor, project, member)) {
+    throw new P.ApiError(403, msg || 'You do not have permission to do that in this project.', 'FORBIDDEN');
+  }
+  return { project, member };
+}
+
 // Run a set of writes in a single transaction. The callback receives a
 // connection that exposes .execute(), so the service helpers (which only need
 // something with .execute) work against it unchanged.
@@ -305,7 +318,7 @@ router.post('/projects/:id/tasks', gate, ah(async (req, res) => {
   const actor = actorOf(req);
   const pool = await getDB();
   const projectId = P.parseId(req.params.id, 'project id');
-  await P.authorizeProject(pool, actor, projectId, P.CAP.ACT);
+  await requireTaskControl(pool, actor, projectId, 'You are not allowed to create tasks in this project.');
 
   const data = P.validateTaskCreate(req.body);
   const assignees = await P.validateAssignees(pool, projectId, data.assignees);
@@ -362,9 +375,24 @@ router.patch('/tasks/:taskId', gate, ah(async (req, res) => {
   const pool = await getDB();
   const taskId = P.parseId(req.params.taskId, 'task id');
   const task = await P.loadTask(pool, taskId);
-  await P.authorizeProject(pool, actor, task.project_id, P.CAP.ACT);
+  const project = await P.loadProject(pool, task.project_id);
+  const member = await P.isMember(pool, task.project_id, actor.id);
+  if (!P.can(P.CAP.VIEW, actor, project, member)) {
+    throw new P.ApiError(403, 'You do not have access to this task.', 'FORBIDDEN');
+  }
 
   const fields = P.validateTaskUpdate(req.body);
+  // Limited members (allow_member_tasks off) may ONLY change the status of a
+  // task assigned to them — nothing else.
+  if (!P.fullTaskControl(actor, project, member)) {
+    const assigned = await P.isAssignee(pool, taskId, actor.id);
+    if (!assigned) {
+      throw new P.ApiError(403, 'You can only update tasks assigned to you.', 'FORBIDDEN');
+    }
+    if (Object.keys(fields).some((k) => k !== 'status')) {
+      throw new P.ApiError(403, 'You can only change the status of your assigned tasks.', 'FORBIDDEN', { allowed: ['status'] });
+    }
+  }
   const cols = Object.keys(fields);
   const setSql = cols.map((c) => `${c} = ?`).join(', ');
   await pool.execute(`UPDATE tasks SET ${setSql} WHERE id = ?`, [...cols.map((c) => fields[c]), taskId]);
@@ -395,7 +423,7 @@ router.put('/tasks/:taskId/assignees', gate, ah(async (req, res) => {
   const pool = await getDB();
   const taskId = P.parseId(req.params.taskId, 'task id');
   const task = await P.loadTask(pool, taskId);
-  await P.authorizeProject(pool, actor, task.project_id, P.CAP.ACT);
+  await requireTaskControl(pool, actor, task.project_id, 'You are not allowed to change assignees in this project.');
 
   const next = await P.validateAssignees(pool, task.project_id, req.body.assignee_ids);
   const [currentRows] = await pool.execute(
@@ -433,7 +461,7 @@ router.delete('/tasks/:taskId', gate, ah(async (req, res) => {
   const pool = await getDB();
   const taskId = P.parseId(req.params.taskId, 'task id');
   const task = await P.loadTask(pool, taskId);
-  await P.authorizeProject(pool, actor, task.project_id, P.CAP.ACT);
+  await requireTaskControl(pool, actor, task.project_id, 'You are not allowed to delete tasks in this project.');
 
   await pool.execute('DELETE FROM tasks WHERE id = ?', [taskId]);
   await P.logActivity(pool, {
@@ -465,7 +493,7 @@ router.post('/projects/:id/comments', gate, ah(async (req, res) => {
   const actor = actorOf(req);
   const pool = await getDB();
   const projectId = P.parseId(req.params.id, 'project id');
-  await P.authorizeProject(pool, actor, projectId, P.CAP.ACT);
+  await requireTaskControl(pool, actor, projectId, 'You can only comment on tasks assigned to you in this project.');
   const { body } = P.validateComment(req.body);
 
   const [result] = await pool.execute(
@@ -484,7 +512,15 @@ router.post('/tasks/:taskId/comments', gate, ah(async (req, res) => {
   const pool = await getDB();
   const taskId = P.parseId(req.params.taskId, 'task id');
   const task = await P.loadTask(pool, taskId);
-  await P.authorizeProject(pool, actor, task.project_id, P.CAP.ACT);
+  const project = await P.loadProject(pool, task.project_id);
+  const member = await P.isMember(pool, task.project_id, actor.id);
+  // Full controllers can comment on any task; a limited member can comment only
+  // on tasks assigned to them.
+  const allowed = P.fullTaskControl(actor, project, member)
+    || (member && await P.isAssignee(pool, taskId, actor.id));
+  if (!allowed) {
+    throw new P.ApiError(403, 'You can only comment on tasks assigned to you.', 'FORBIDDEN');
+  }
   const { body } = P.validateComment(req.body);
 
   const [result] = await pool.execute(

@@ -60,6 +60,24 @@ test('sys-admin can create',  () => assert.strictEqual(P.canCreateProject(sys), 
 test('team-lead can create',  () => assert.strictEqual(P.canCreateProject(tlCreator), true));
 test('employee cannot create',() => assert.strictEqual(P.canCreateProject(empMember), false));
 
+console.log('\nPer-project "members can create tasks" toggle');
+// project created by team-lead #2; toggle on vs off
+const projOn  = { id: 10, created_by: 2, allow_member_tasks: 1 };
+const projOff = { id: 10, created_by: 2, allow_member_tasks: 0 };
+test('toggle defaults to ON when column absent', () => assert.strictEqual(P.allowsMemberTasks({ created_by: 2 }), true));
+test('toggle reads 0 as OFF',                    () => assert.strictEqual(P.allowsMemberTasks(projOff), false));
+// fullTaskControl = create/edit/delete/reassign + comment freely
+test('ON:  employee member HAS full task control',  () => assert.strictEqual(P.fullTaskControl(empMember, projOn, true), true));
+test('OFF: employee member LOSES full task control', () => assert.strictEqual(P.fullTaskControl(empMember, projOff, true), false));
+test('OFF: team-lead member KEEPS control (manager)',() => assert.strictEqual(P.fullTaskControl(tlMember, projOff, true), true));
+test('OFF: creator KEEPS control',                   () => assert.strictEqual(P.fullTaskControl(tlCreator, projOff, true), true));
+test('OFF: sys-admin KEEPS full control',            () => assert.strictEqual(P.fullTaskControl(sys, projOff, false), true));
+test('OFF: employee NON-member has no control',      () => assert.strictEqual(P.fullTaskControl(empOutsider, projOff, false), false));
+test('capsFor.createTask follows the toggle (ON)',   () => assert.strictEqual(P.capsFor(empMember, projOn, true).createTask, true));
+test('capsFor.createTask follows the toggle (OFF)',  () => assert.strictEqual(P.capsFor(empMember, projOff, true).createTask, false));
+test('OFF employee can still VIEW (board visibility)', () => assert.strictEqual(P.can(P.CAP.VIEW, empMember, projOff, true), true));
+test('project update accepts allow_member_tasks',    () => assert.strictEqual(P.validateProjectUpdate({ allow_member_tasks: false }).allow_member_tasks, 0));
+
 console.log('\nInput validation');
 test('project requires a name', () => throwsApi(() => P.validateProjectCreate({}), 'VALIDATION', 400));
 test('project name trims',      () => assert.strictEqual(P.validateProjectCreate({ name: '  Apollo  ' }).name, 'Apollo'));

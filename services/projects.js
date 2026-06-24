@@ -79,15 +79,41 @@ function canCreateProject(actor) {
   return actor.role === ROLES.SYS_ADMIN || actor.role === ROLES.TEAM_LEAD;
 }
 
+// Per-project toggle: may an employee MEMBER create + freely act on tasks?
+// Defaults to true (column default 1) so existing projects are unchanged.
+function allowsMemberTasks(project) {
+  const v = project?.allow_member_tasks;
+  return v === undefined || v === null || Number(v) === 1;
+}
+
+// "Full task control" = create tasks, edit/delete/reassign ANY task, comment
+// anywhere in the project. Granted to: sys-admin; the project's managers
+// (creator, or a team-lead member); and employee members ONLY when the
+// project's allow_member_tasks toggle is on. When the toggle is off, employee
+// members drop to a limited mode (status + comment on their assigned tasks only,
+// no create) — enforced per-action in the routes via fullTaskControl + isAssignee.
+function fullTaskControl(actor, project, member) {
+  if (actor.role === ROLES.SYS_ADMIN) return true;
+  if (!member) return false;                       // non-members never act
+  if (Number(project.created_by) === Number(actor.id)) return true;  // creator
+  if (actor.role === ROLES.TEAM_LEAD) return true; // team-lead member = manager
+  return allowsMemberTasks(project);               // employee member: toggle
+}
+
 // The actor's capabilities against a project, for the client to show/hide
 // controls. The server still enforces every action independently — this is a
 // UX hint derived from the same predicates, never the gate itself.
+//   createTask: can create tasks + edit/delete/reassign any task + comment freely.
+//   A limited employee member (createTask=false) may still change status and
+//   comment on tasks ASSIGNED to them — the client checks assignment for that.
 function capsFor(actor, project, member) {
   return {
-    view:   can(CAP.VIEW, actor, project, member),
-    manage: can(CAP.MANAGE, actor, project, member),
-    act:    can(CAP.ACT, actor, project, member),
-    delete: can(CAP.DELETE, actor, project, member),
+    view:       can(CAP.VIEW, actor, project, member),
+    manage:     can(CAP.MANAGE, actor, project, member),
+    delete:     can(CAP.DELETE, actor, project, member),
+    createTask: fullTaskControl(actor, project, member),
+    isMember:   !!member,
+    allowMemberTasks: allowsMemberTasks(project),
   };
 }
 
@@ -109,6 +135,14 @@ async function loadTask(pool, taskId) {
   const [rows] = await pool.execute('SELECT * FROM tasks WHERE id = ?', [taskId]);
   if (!rows.length) throw new ApiError(404, 'Task not found.', 'NOT_FOUND');
   return rows[0];
+}
+
+async function isAssignee(pool, taskId, userId) {
+  const [rows] = await pool.execute(
+    'SELECT 1 FROM task_assignees WHERE task_id = ? AND portal_user_id = ? LIMIT 1',
+    [taskId, userId]
+  );
+  return rows.length > 0;
 }
 
 async function isMember(pool, projectId, userId) {
@@ -255,10 +289,18 @@ function validateProjectUpdate(body) {
   if ('name' in body)        out.name = requireString(body.name, 'name', { max: 200 });
   if ('description' in body) out.description = requireString(body.description, 'description', { max: 5000, required: false });
   if ('status' in body)      out.status = enumOr(body.status, PROJECT_STATUSES, 'status', 'active');
+  if ('allow_member_tasks' in body) out.allow_member_tasks = toBool(body.allow_member_tasks) ? 1 : 0;
   if (Object.keys(out).length === 0) {
     throw new ApiError(400, 'Nothing to update.', 'VALIDATION');
   }
   return out;
+}
+
+function toBool(v) {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') return v === 'true' || v === '1';
+  return !!v;
 }
 
 function validateTaskCreate(body) {
@@ -294,8 +336,9 @@ module.exports = {
   ApiError,
   // permissions
   can, canCreateProject, capsFor, authorizeProject,
+  fullTaskControl, allowsMemberTasks,
   // db helpers
-  loadProject, loadTask, isMember, memberIdSet, validateAssignees,
+  loadProject, loadTask, isMember, isAssignee, memberIdSet, validateAssignees,
   logActivity, computeProgress,
   // validation
   parseId, normalizeIdList,

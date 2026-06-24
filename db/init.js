@@ -748,6 +748,7 @@ async function initTenantSchema(poolArg) {
       name        VARCHAR(200) NOT NULL,
       description TEXT NULL,
       status      ENUM('active','archived') NOT NULL DEFAULT 'active',
+      allow_member_tasks TINYINT(1) NOT NULL DEFAULT 1,
       created_by  INT NOT NULL,
       created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -755,6 +756,9 @@ async function initTenantSchema(poolArg) {
       FOREIGN KEY (created_by) REFERENCES portal_users(id)
     )
   `);
+  // Backfill the column for tenants whose projects table predates it. Default 1
+  // preserves the original behaviour (any member can create tasks).
+  try { await pool.execute(`ALTER TABLE projects ADD COLUMN allow_member_tasks TINYINT(1) NOT NULL DEFAULT 1 AFTER status`); } catch (_) {}
 
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS project_members (
