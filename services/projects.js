@@ -79,6 +79,18 @@ function canCreateProject(actor) {
   return actor.role === ROLES.SYS_ADMIN || actor.role === ROLES.TEAM_LEAD;
 }
 
+// The actor's capabilities against a project, for the client to show/hide
+// controls. The server still enforces every action independently — this is a
+// UX hint derived from the same predicates, never the gate itself.
+function capsFor(actor, project, member) {
+  return {
+    view:   can(CAP.VIEW, actor, project, member),
+    manage: can(CAP.MANAGE, actor, project, member),
+    act:    can(CAP.ACT, actor, project, member),
+    delete: can(CAP.DELETE, actor, project, member),
+  };
+}
+
 const FORBIDDEN_MSG = {
   [CAP.VIEW]:   'You do not have access to this project.',
   [CAP.MANAGE]: 'You do not have permission to manage this project.',
@@ -281,7 +293,7 @@ module.exports = {
   ROLES, CAP, ACTIONS, TASK_STATUSES, TASK_PRIORITIES, PROJECT_STATUSES,
   ApiError,
   // permissions
-  can, canCreateProject, authorizeProject,
+  can, canCreateProject, capsFor, authorizeProject,
   // db helpers
   loadProject, loadTask, isMember, memberIdSet, validateAssignees,
   logActivity, computeProgress,

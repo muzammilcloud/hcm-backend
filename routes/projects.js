@@ -118,33 +118,53 @@ router.get('/projects', gate, ah(async (req, res) => {
     SELECT p.*,
       (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = p.id) AS member_count,
       (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS task_count,
-      (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'done') AS done_count
+      (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'done') AS done_count,
+      EXISTS(SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.portal_user_id = ?) AS is_member
     FROM projects p`;
 
   let rows;
   if (seesAll) {
-    [rows] = await pool.execute(`${base} ORDER BY p.created_at DESC`);
+    [rows] = await pool.execute(`${base} ORDER BY p.created_at DESC`, [actor.id]);
   } else {
     [rows] = await pool.execute(
       `${base}
         JOIN project_members me ON me.project_id = p.id AND me.portal_user_id = ?
        ORDER BY p.created_at DESC`,
-      [actor.id]
+      [actor.id, actor.id]
     );
   }
 
   const projects = rows.map((p) => {
     const total = Number(p.task_count);
     const done = Number(p.done_count);
+    const member = !!Number(p.is_member);
     return {
       ...p,
       member_count: Number(p.member_count),
       task_count: total,
       done_count: done,
+      is_member: member,
       percent_complete: total === 0 ? 0 : Math.round((done / total) * 100),
+      can: P.capsFor(actor, p, member),
     };
   });
-  res.json(projects);
+  res.json({ can_create: P.canCreateProject(actor), projects });
+}));
+
+// GET /api/projects/directory — active users that can be added as members or
+// assignees. Module-scoped (any authenticated user in a projects-enabled
+// tenant) so team leads can use the member picker too; adding a member is
+// still separately gated by CAP.MANAGE on the target project. Declared BEFORE
+// /projects/:id so 'directory' isn't captured as an :id.
+router.get('/projects/directory', gate, ah(async (req, res) => {
+  const pool = await getDB();
+  const [rows] = await pool.execute(
+    `SELECT id, name, email, portal_role
+       FROM portal_users
+      WHERE status = 'active'
+      ORDER BY name ASC`
+  );
+  res.json(rows);
 }));
 
 // GET /api/projects/:id — project detail + members + progress.
@@ -152,7 +172,7 @@ router.get('/projects/:id', gate, ah(async (req, res) => {
   const actor = actorOf(req);
   const pool = await getDB();
   const projectId = P.parseId(req.params.id, 'project id');
-  const { project } = await P.authorizeProject(pool, actor, projectId, P.CAP.VIEW);
+  const { project, member } = await P.authorizeProject(pool, actor, projectId, P.CAP.VIEW);
 
   const [members] = await pool.execute(
     `SELECT pm.portal_user_id AS id, pu.name, pu.email, pu.portal_role,
@@ -169,6 +189,7 @@ router.get('/projects/:id', gate, ah(async (req, res) => {
     ...project,
     members: members.map((m) => ({ ...m, is_creator: Number(m.id) === Number(project.created_by) })),
     progress,
+    can: P.capsFor(actor, project, member),
   });
 }));
 
