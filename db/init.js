@@ -737,6 +737,111 @@ async function initTenantSchema(poolArg) {
     )
   `);
 
+  // ── Projects & Task Management ────────────────────────────────────────────
+  // Member-collaboration module. All five tables are tenant-scoped (they live
+  // in the tenant DB like everything else). Membership and task assignment
+  // reference portal_users(id); deleting a user/project/task cascades so no
+  // orphaned membership, assignment, comment, or activity rows are left behind.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id          INT AUTO_INCREMENT PRIMARY KEY,
+      name        VARCHAR(200) NOT NULL,
+      description TEXT NULL,
+      status      ENUM('active','archived') NOT NULL DEFAULT 'active',
+      created_by  INT NOT NULL,
+      created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_projects_creator (created_by),
+      FOREIGN KEY (created_by) REFERENCES portal_users(id)
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS project_members (
+      id             INT AUTO_INCREMENT PRIMARY KEY,
+      project_id     INT NOT NULL,
+      portal_user_id INT NOT NULL,
+      added_by       INT NULL,
+      created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_project_member (project_id, portal_user_id),
+      INDEX idx_pm_user (portal_user_id),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id          INT AUTO_INCREMENT PRIMARY KEY,
+      project_id  INT NOT NULL,
+      title       VARCHAR(300) NOT NULL,
+      description TEXT NULL,
+      status      ENUM('todo','in_progress','done') NOT NULL DEFAULT 'todo',
+      priority    ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
+      due_date    DATE NULL,
+      created_by  INT NOT NULL,
+      created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_tasks_project (project_id, status),
+      INDEX idx_tasks_creator (created_by),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (created_by) REFERENCES portal_users(id)
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS task_assignees (
+      id             INT AUTO_INCREMENT PRIMARY KEY,
+      task_id        INT NOT NULL,
+      portal_user_id INT NOT NULL,
+      assigned_by    INT NULL,
+      created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_task_assignee (task_id, portal_user_id),
+      INDEX idx_ta_user (portal_user_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (portal_user_id) REFERENCES portal_users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Comments are polymorphic: a comment hangs off a project OR a task. Exactly
+  // one of (project_id, task_id) is set; project_id is always populated too so
+  // member-visibility checks never need a task lookup.
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id          INT AUTO_INCREMENT PRIMARY KEY,
+      project_id  INT NOT NULL,
+      task_id     INT NULL,
+      author_id   INT NOT NULL,
+      body        TEXT NOT NULL,
+      created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_comments_project (project_id, created_at),
+      INDEX idx_comments_task (task_id, created_at),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (author_id) REFERENCES portal_users(id)
+    )
+  `);
+
+  // Append-only activity feed. meta_json carries event-specific details
+  // (e.g. {from:'todo',to:'done'} or {added:[3,4]}). task_id is null for
+  // project-level events (project created, member added/removed).
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS project_activity (
+      id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      project_id  INT NOT NULL,
+      task_id     INT NULL,
+      actor_id    INT NULL,
+      action      VARCHAR(60) NOT NULL,
+      meta_json   JSON NULL,
+      created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_activity_project (project_id, created_at),
+      INDEX idx_activity_task (task_id, created_at),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )
+  `);
+
   console.log('✅ Database tables ready');
   // Dummy seed data (Ali/Sara/Omar/muzammilquecko + salary history) intentionally
   // NOT seeded for new tenants. The `app` tenant inherits its data from the legacy

@@ -55,6 +55,26 @@ const FEATURES = {
   trial:    GROWTH_FEATURES,   // legacy alias
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-tenant BETA access
+//
+// Grants a feature to specific tenants (by slug) regardless of their plan, so a
+// new module can ship to production and be tested on ONE workspace before it's
+// promoted to a plan tier. Keyed by feature → set of tenant slugs.
+//
+// 'projects' (Project & Task Management) is currently beta-gated to qa-starter
+// only. To roll it out to everyone on the Growth plan, add 'projects' to
+// GROWTH_FEATURES above (one line) and remove its BETA_ACCESS entry below.
+// ─────────────────────────────────────────────────────────────────────────────
+const BETA_ACCESS = {
+  projects: new Set(['qa-starter']),
+};
+
+function tenantInBeta(tenant, feature) {
+  const slug = String(tenant?.slug || '').toLowerCase().trim();
+  return !!slug && !!BETA_ACCESS[feature]?.has(slug);
+}
+
 // Map each feature to the minimum plan that includes it. Used by FE upgrade
 // nudges so a 402 from any feature gate can say "Upgrade to <plan>" cleanly.
 const FEATURE_MIN_PLAN = {
@@ -74,6 +94,7 @@ const FEATURE_MIN_PLAN = {
   monthly_reports:            'growth',
   csv_exports:                'growth',
   audit_log:                  'growth',
+  projects:                   'growth',   // Project & Task Management (beta on qa-starter)
 };
 
 // Resolve a tenant's effective plan key. Treats anything unknown as 'starter'
@@ -95,13 +116,18 @@ function planOf(tenant) {
 
 // Public: does this tenant include the given feature?
 function tenantHas(tenant, feature) {
+  if (tenantInBeta(tenant, feature)) return true;   // beta override wins over plan
   const plan = planOf(tenant);
   return FEATURES[plan].has(feature);
 }
 
 // Public: list of all features the tenant has access to.
 function tenantFeatures(tenant) {
-  return [...FEATURES[planOf(tenant)]];
+  const list = [...FEATURES[planOf(tenant)]];
+  for (const feature of Object.keys(BETA_ACCESS)) {
+    if (tenantInBeta(tenant, feature) && !list.includes(feature)) list.push(feature);
+  }
+  return list;
 }
 
 // Public: minimum plan that unlocks a given feature.

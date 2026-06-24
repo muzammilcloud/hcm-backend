@@ -99,4 +99,37 @@ async function requireTeamLead(req, res, next) {
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
-module.exports = { requireAdmin, requireEmployee, requireTeamLead };
+// Authenticate ANY active portal user and attach their identity + role. Unlike
+// requireEmployee (which only resolves the session id) this also loads
+// portal_role, so row-level permission logic (e.g. the Projects module) can
+// branch on sys-admin / team-lead / employee from a single guard. Use this for
+// endpoints all three roles share, where access is decided per-resource.
+async function requireUser(req, res, next) {
+  const token = req.headers['authorization']?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!hasTenant(req)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const pool = await getDB();
+    const [rows] = await pool.execute(
+      `SELECT ps.portal_user_id, pu.email, pu.name, pu.portal_role
+       FROM portal_sessions ps
+       JOIN portal_users pu ON ps.portal_user_id = pu.id
+       WHERE ps.token = ? AND ps.expires_at > NOW()`,
+      [token]
+    );
+    if (rows.length === 0) return res.status(401).json({ error: 'Session expired. Please login again.' });
+    req.portalUserId = rows[0].portal_user_id;
+    req.employeeId   = rows[0].portal_user_id;
+    req.portalRole   = rows[0].portal_role;
+    req.isSysAdmin   = rows[0].portal_role === 'sys-admin';
+    req.user = {
+      id: rows[0].portal_user_id,
+      email: rows[0].email,
+      name: rows[0].name,
+      role: rows[0].portal_role,
+    };
+    return next();
+  } catch (e) { next(e); }
+}
+
+module.exports = { requireAdmin, requireEmployee, requireTeamLead, requireUser };

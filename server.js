@@ -32,6 +32,7 @@ const portalRoutes      = require('./routes/portal');
 const teamleadRoutes    = require('./routes/teamlead');
 const adjustmentRoutes  = require('./routes/adjustments');
 const notificationRoutes = require('./routes/notifications');
+const projectRoutes      = require('./routes/projects');
 
 // Platform-scoped routes (run against the platform DB)
 const signupRoutes      = require('./routes/signup');
@@ -123,6 +124,7 @@ app.use('/api', portalRoutes);
 app.use('/api', teamleadRoutes);
 app.use('/api', adjustmentRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', projectRoutes);
 app.use('/api', settingsRoutes);
 app.use('/api', salaryComponentsRoutes);
 app.use('/api', salaryTaxRoutes);
