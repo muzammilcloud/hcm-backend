@@ -247,7 +247,7 @@ router.post('/public-holidays', requireAdmin, async (req, res) => {
     const fmtNice = new Date(date + 'T00:00:00').toLocaleDateString('en-PK', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     });
-    const headline = `🎉 *New Public Holiday Added* — *${name}*\n📅 ${fmtNice}${is_paid !== false ? '  ·  Paid' : '  ·  Unpaid'}`;
+    const headline = `🎉 *Public Holiday* — *${name}*\n📅 ${fmtNice}${is_paid !== false ? '  ·  Paid' : '  ·  Unpaid'}`;
     postToSlack(headline, [
       { type: 'section', text: { type: 'mrkdwn', text: headline } },
     ]).catch(() => {});
