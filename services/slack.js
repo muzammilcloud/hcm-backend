@@ -54,6 +54,20 @@ async function postLeaveReportToSlack(text, blocks = null) {
   }
 }
 
+// Post public-holiday announcements. Uses the dedicated holiday webhook if the
+// admin set one; otherwise falls back to the general (attendance) channel so
+// existing workspaces keep getting them with no extra setup.
+async function postHolidayToSlack(text, blocks = null) {
+  const creds = await getSlackCreds();
+  const webhookUrl = creds.holiday_webhook_url || creds.webhook_url;
+  if (!webhookUrl) { console.warn('⚠️  No Slack webhook configured for holidays — skipping holiday post'); return; }
+  try {
+    await axios.post(webhookUrl, blocks ? { text, blocks } : { text });
+  } catch (e) {
+    console.error('❌ Slack holiday post failed:', e.message);
+  }
+}
+
 // Look up portal user by Slack user_id via Slack API (matches email)
 async function getEmployeeBySlackId(slackUserId, pool) {
   const botToken = (await getSlackCreds()).bot_token;
@@ -282,6 +296,7 @@ module.exports = {
   verifySlackSignature,
   postToSlack,
   postLeaveReportToSlack,
+  postHolidayToSlack,
   getEmployeeBySlackId,
   fmtTimeInZone,
   getSlackUserTz,

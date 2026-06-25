@@ -4,7 +4,7 @@ const { getDB, logEvent } = require('../db');
 const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { sendLeaveRequestEmail, sendLeaveStatusEmail } = require('../services/email');
 const { notify, getTeamLeadOf } = require('../services/notifications');
-const { postToSlack } = require('../services/slack');
+const { postToSlack, postHolidayToSlack } = require('../services/slack');
 const { tenantHas } = require('../services/features');
 const { getTenantToday, getBusinessConfig, getLeaveYearRange, countLeaveDays, getLeaveCalc } = require('../config/business');
 
@@ -248,7 +248,7 @@ router.post('/public-holidays', requireAdmin, async (req, res) => {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     });
     const headline = `🎉 *Public Holiday* — *${name}*\n📅 ${fmtNice}${is_paid !== false ? '  ·  Paid' : '  ·  Unpaid'}`;
-    postToSlack(headline, [
+    postHolidayToSlack(headline, [
       { type: 'section', text: { type: 'mrkdwn', text: headline } },
     ]).catch(() => {});
 

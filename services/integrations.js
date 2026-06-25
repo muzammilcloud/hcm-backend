@@ -16,6 +16,7 @@ const FALLBACKS = {
     signing_secret:           process.env.SLACK_SIGNING_SECRET || '',
     webhook_url:              process.env.SLACK_WEBHOOK_URL || '',
     leave_report_webhook_url: process.env.SLACK_LEAVE_REPORT_WEBHOOK_URL || '',
+    holiday_webhook_url:      process.env.SLACK_HOLIDAY_WEBHOOK_URL || '',
     source: 'platform',
   }),
   smtp: () => ({
@@ -31,7 +32,7 @@ const FALLBACKS = {
 
 // Fields per integration type that contain secrets — masked when listing
 const SECRET_FIELDS = {
-  slack: ['bot_token', 'signing_secret', 'webhook_url', 'leave_report_webhook_url'],
+  slack: ['bot_token', 'signing_secret', 'webhook_url', 'leave_report_webhook_url', 'holiday_webhook_url'],
   smtp:  ['password'],
   lineworks: ['bot_secret', 'client_secret', 'private_key'],
 };
