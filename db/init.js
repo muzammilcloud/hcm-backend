@@ -184,6 +184,9 @@ async function initTenantSchema(poolArg) {
   // scheduler interprets it in the tenant's timezone (derived from country).
   // Default 12 = noon, preserving the prior behaviour.
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN daily_report_hour TINYINT NOT NULL DEFAULT 12`); } catch (_) {}
+  // Master on/off switch for the Daily Leave & WFH Slack report. Default 1 (on)
+  // preserves prior behaviour; set 0 to stop the report entirely.
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN daily_report_enabled TINYINT(1) NOT NULL DEFAULT 1`); } catch (_) {}
   // Explicit IANA timezone (e.g. 'America/Los_Angeles'). When set, it overrides
   // the country-derived zone for all scheduling + "today" math. NULL = derive
   // from country_code (back-compat for existing tenants).

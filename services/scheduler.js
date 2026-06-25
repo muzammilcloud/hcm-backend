@@ -328,8 +328,10 @@ async function maybeSendDailyLeaveReport(tenant) {
   let explicitTz = null, countryCode = null, reportHour = 12;
   try {
     const [s] = await pool.execute(
-      'SELECT timezone, country_code, daily_report_hour FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
+      'SELECT timezone, country_code, daily_report_hour, daily_report_enabled FROM tenant_settings WHERE singleton_key = 1 LIMIT 1'
     );
+    // Master switch: skip entirely when the admin has turned the report off.
+    if (s.length && Number(s[0]?.daily_report_enabled) === 0) return;
     explicitTz  = s[0]?.timezone || null;
     countryCode = s[0]?.country_code || null;
     const h = Number(s[0]?.daily_report_hour);
