@@ -16,16 +16,31 @@ const { tenantHasDesktop } = require('../services/desktop');
 router.get('/desktop/access', requireEmployee, async (req, res) => {
   const enabled = tenantHasDesktop(req.tenant);
   let enforced = false;
-  if (enabled) {
-    try {
-      const pool = await getDB();
+  let tracking = null;
+  try {
+    const pool = await getDB();
+    if (enabled) {
       const [[s]] = await pool.execute(
         'SELECT enforce_desktop_tracking FROM tenant_settings WHERE singleton_key = 1'
       );
       enforced = !!s?.enforce_desktop_tracking;
-    } catch { /* column may not exist yet — treat as not enforced */ }
-  }
-  res.json({ enabled, enforced });
+    }
+    // The caller's current desktop heartbeat — lets the client (and us) see
+    // whether the desktop is running + ready, i.e. whether clock-in is allowed.
+    const [[u]] = await pool.execute(
+      'SELECT desktop_last_seen, desktop_ready FROM portal_users WHERE id = ?',
+      [req.portalUserId]
+    );
+    const last = u && u.desktop_last_seen ? new Date(u.desktop_last_seen).getTime() : null;
+    const secondsAgo = last ? Math.round((Date.now() - last) / 1000) : null;
+    tracking = {
+      last_seen:   u?.desktop_last_seen || null,
+      seconds_ago: secondsAgo,
+      ready:       !!(u && u.desktop_ready),
+      active:      !!(u && u.desktop_ready) && secondsAgo != null && secondsAgo <= 90,
+    };
+  } catch { /* columns may not exist yet */ }
+  res.json({ enabled, enforced, tracking });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
