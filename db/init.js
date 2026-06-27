@@ -194,6 +194,13 @@ async function initTenantSchema(poolArg) {
   // Day of week the weekly email digest goes out (lowercase 3-letter key:
   // mon..sun). Default 'mon'. Fires at 08:00 in the workspace timezone.
   try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN weekly_report_day VARCHAR(3) NOT NULL DEFAULT 'mon'`); } catch (_) {}
+  // Require the Desktop app to be running + tracking for employees/team-leads to
+  // clock in (only meaningful when the tenant has the desktop add-on). Default 0.
+  try { await pool.execute(`ALTER TABLE tenant_settings ADD COLUMN enforce_desktop_tracking TINYINT(1) NOT NULL DEFAULT 0`); } catch (_) {}
+  // Desktop heartbeat: last time the user's desktop app reported in, and whether
+  // it was ready to track (idle hook running / Accessibility granted).
+  try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN desktop_last_seen DATETIME NULL DEFAULT NULL`); } catch (_) {}
+  try { await pool.execute(`ALTER TABLE portal_users ADD COLUMN desktop_ready TINYINT(1) NOT NULL DEFAULT 0`); } catch (_) {}
 
   // Seed portal_role for known accounts
   try { await pool.execute(`UPDATE portal_users SET portal_role='team-lead' WHERE email='muzammilquecko@gmail.com' AND portal_role='employee'`); } catch (_) {}

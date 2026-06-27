@@ -61,6 +61,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       slip_title, slip_signatory_name, slip_signatory_title,
       daily_working_hours, working_days, monthly_required_hours_override,
       daily_report_hour, daily_report_enabled, timezone, weekly_report_day,
+      enforce_desktop_tracking,
     } = req.body || {};
 
     // Daily Leave & WFH report on/off. Optional; null = leave unchanged.
@@ -68,6 +69,13 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
     if (daily_report_enabled !== undefined && daily_report_enabled !== null && daily_report_enabled !== '') {
       nextReportEnabled = (daily_report_enabled === true || daily_report_enabled === 1
         || daily_report_enabled === '1' || daily_report_enabled === 'true') ? 1 : 0;
+    }
+
+    // Require the Desktop app to be running + tracking to clock in. Optional.
+    let nextEnforceDesktop = null;
+    if (enforce_desktop_tracking !== undefined && enforce_desktop_tracking !== null && enforce_desktop_tracking !== '') {
+      nextEnforceDesktop = (enforce_desktop_tracking === true || enforce_desktop_tracking === 1
+        || enforce_desktop_tracking === '1' || enforce_desktop_tracking === 'true') ? 1 : 0;
     }
 
     // Weekly email-digest day (mon..sun). Optional.
@@ -174,6 +182,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
          daily_report_hour    = COALESCE(?, daily_report_hour),
          daily_report_enabled = COALESCE(?, daily_report_enabled),
          weekly_report_day    = COALESCE(?, weekly_report_day),
+         enforce_desktop_tracking = COALESCE(?, enforce_desktop_tracking),
          monthly_required_hours_override = ${nextMonthlyOverride === undefined ? 'monthly_required_hours_override' : '?'}
        WHERE singleton_key = 1`;
     const updateParams = [
@@ -190,6 +199,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       nextReportHour,
       nextReportEnabled,
       nextWeeklyDay,
+      nextEnforceDesktop,
       ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
     ];
 

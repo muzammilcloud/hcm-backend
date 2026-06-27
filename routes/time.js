@@ -5,11 +5,17 @@ const { requireAdmin, requireEmployee } = require('../middleware/auth');
 const { postToSlack, getSlackUserIdByEmail, sendSlackDM } = require('../services/slack');
 const { getBusinessConfig } = require('../config/business');
 const { tenantHas } = require('../services/features');
+const { checkDesktopClockInAllowed } = require('../services/desktop');
 
 // POST /api/employee/clock-in
 router.post('/employee/clock-in', requireEmployee, async (req, res) => {
   try {
     const pool = await getDB();
+    // Enforce desktop tracking (when the tenant requires it): the desktop app
+    // must be running + ready before this user can clock in.
+    const block = await checkDesktopClockInAllowed(pool, req.tenant, req.portalUserId);
+    if (block) return res.status(block.status).json(block.body);
+
     const [active] = await pool.execute(
       'SELECT * FROM portal_time_entries WHERE portal_user_id=? AND clock_out IS NULL', [req.portalUserId]
     );

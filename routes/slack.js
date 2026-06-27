@@ -5,6 +5,7 @@ const router  = express.Router({ mergeParams: true });
 const { getDB, logEvent, tenantContext } = require('../db');
 const { getBusinessConfig } = require('../config/business');
 const { getTenantBySlug } = require('../services/tenant');
+const { checkDesktopClockInAllowed } = require('../services/desktop');
 const {
   getEmployeeBySlackId,
   postToSlack,
@@ -56,6 +57,7 @@ router.use(async (req, res, next) => {
     }
     return res.status(200).end();
   }
+  req.tenant = tenant;   // expose to handlers (e.g. desktop-tracking enforcement)
   tenantContext.run({ dbName: tenant.db_name, slug: tenant.slug, tenantId: tenant.id }, async () => {
     try {
       if (!(await slackSignatureOk(req))) return res.status(401).send('Invalid Slack signature');
@@ -74,6 +76,17 @@ router.post('/clockin', async (req, res) => {
   try {
     const pool = await getDB();
     const emp  = await getEmployeeBySlackId(user_id, pool);
+
+    // Desktop tracking enforcement: if the tenant requires it, the desktop app
+    // must be running + ready before this user can clock in (even via Slack).
+    const block = await checkDesktopClockInAllowed(pool, req.tenant, emp.id);
+    if (block) {
+      await axios.post(req.body.response_url, {
+        response_type: 'ephemeral',
+        text: block.body.error,
+      }).catch(() => {});
+      return;
+    }
 
     // Check already clocked in
     const [active] = await pool.execute(
