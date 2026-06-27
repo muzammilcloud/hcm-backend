@@ -354,6 +354,24 @@ router.get('/teamlead/team/portal-users/:id/time-entries', requireTeamLead, asyn
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/teamlead/team/idle-sessions — all idle across the team lead's team
+router.get('/teamlead/team/idle-sessions', requireTeamLead, async (req, res) => {
+  try {
+    if (!req.teamLeadEmployeeId) return res.json([]);
+    const pool = await getDB();
+    const [rows] = await pool.execute(
+      `SELECT ids.*, pu.name, pu.department
+       FROM idle_sessions ids
+       JOIN portal_users pu ON ids.portal_user_id = pu.id
+       JOIN employees e ON pu.employee_id = e.id
+       WHERE e.reports_to = ?
+       ORDER BY ids.idle_start DESC`,
+      [req.teamLeadEmployeeId]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/teamlead/team/portal-users/:id/idle-sessions
 router.get('/teamlead/team/portal-users/:id/idle-sessions', requireTeamLead, async (req, res) => {
   try {
