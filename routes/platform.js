@@ -40,10 +40,15 @@ function decorateTenant(t) {
   const meta = t.metadata || {};
   const slug    = meta.released_slug    || t.slug;
   const db_name = meta.released_db_name || t.db_name;
+  const isTrial = raw === 'demo' || raw === 'trial';
+  const isFree  = raw === 'free' || raw === '';
   return {
     ...t, slug, db_name,
     slug_released: !!meta.released_slug,
-    is_trial: raw === 'demo' || raw === 'trial',
+    is_trial: isTrial,
+    // Explicit billing phase so the admin UI shows Free / Trial / Paid exactly,
+    // instead of treating "anything not a trial" as paid.
+    billing_phase: isTrial ? 'trial' : (isFree ? 'free' : 'paid'),
     effective_tier: planOf(t),
   };
 }
@@ -174,9 +179,11 @@ router.post('/platform/tenants/:id/plan', requirePlatformAdmin, async (req, res,
   try {
     const { plan } = req.body || {};
     // 'trial' dropped — it was a duplicate of 'demo'. Accept the legacy value
-    // for backward-compat but normalise it to 'demo'.
+    // for backward-compat but normalise it to 'demo'. The admin can set any real
+    // tier (free / starter / growth / business) plus the legacy 'paid'/'demo'.
     const normalized = plan === 'trial' ? 'demo' : plan;
-    if (!['demo', 'paid'].includes(normalized)) return res.status(400).json({ error: 'Invalid plan' });
+    const VALID = ['free', 'demo', 'paid', 'starter', 'growth', 'business'];
+    if (!VALID.includes(normalized)) return res.status(400).json({ error: 'Invalid plan' });
     await setTenantPlan(req.params.id, normalized);
     audit({ actorType: 'platform_admin', actorId: req.platformAdmin.id, tenantId: Number(req.params.id), action: 'tenant.plan.change', detail: { plan: normalized }, ip: req.ip });
     res.json({ ok: true });
@@ -203,9 +210,9 @@ router.get('/platform/stats', requirePlatformAdmin, async (req, res, next) => {
         SUM(status = 'suspended')    AS suspended,
         SUM(status = 'provisioning') AS provisioning,
         SUM(status = 'expired')      AS expired,
-        SUM(plan = 'paid')           AS paid,
-        SUM(plan = 'demo')           AS demo,
-        SUM(plan = 'trial')          AS trial,
+        SUM(plan = 'free')                                   AS free,
+        SUM(plan IN ('demo', 'trial'))                       AS demo,
+        SUM(plan IN ('paid', 'starter', 'growth', 'business')) AS paid,
         COUNT(*)                     AS total
       FROM tenants
       WHERE deleted_at IS NULL

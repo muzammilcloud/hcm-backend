@@ -368,7 +368,10 @@ async function deleteTenant(tenantId) {
 // Update plan (used by Stripe webhook in Phase 2; usable manually for now)
 async function setTenantPlan(tenantId, plan) {
   const db = getPlatformDB();
-  const trialEndsClause = plan === 'paid' ? ', trial_ends_at = NULL, status = "active"' : '';
+  // Free and any paid tier are committed states (not trials): clear the trial
+  // window and ensure the workspace is active. 'demo'/'trial' keep their window.
+  const committed = plan !== 'demo' && plan !== 'trial';
+  const trialEndsClause = committed ? ', trial_ends_at = NULL, status = "active"' : '';
   await db.execute(
     `UPDATE tenants SET plan = ?${trialEndsClause} WHERE id = ?`,
     [plan, tenantId]
