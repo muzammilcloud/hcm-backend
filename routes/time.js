@@ -293,6 +293,21 @@ router.post('/employee/idle', requireEmployee, async (req, res) => {
       [req.portalUserId, mysqlStart, mysqlStart]
     );
     const time_entry_id = entries[0]?.id || null;
+    // One row per idle PERIOD: the desktop reports the same idle_start repeatedly
+    // as the idle continues, so extend the existing row (grow idle_end + total)
+    // instead of inserting a new segment each time. Keeps history clean:
+    // "Idle From <start> · Resumed At <end> · Duration <total>".
+    const [existing] = await pool.execute(
+      'SELECT id FROM idle_sessions WHERE portal_user_id = ? AND idle_start = ? LIMIT 1',
+      [req.portalUserId, mysqlStart]
+    );
+    if (existing.length) {
+      await pool.execute(
+        'UPDATE idle_sessions SET idle_end = ?, duration_minutes = ?, time_entry_id = COALESCE(time_entry_id, ?) WHERE id = ?',
+        [mysqlEnd, duration_minutes, time_entry_id, existing[0].id]
+      );
+      return res.json({ success: true, updated: true, duration_minutes, time_entry_id });
+    }
     await pool.execute(
       'INSERT INTO idle_sessions (portal_user_id, time_entry_id, idle_start, idle_end, duration_minutes) VALUES (?,?,?,?,?)',
       [req.portalUserId, time_entry_id, mysqlStart, mysqlEnd, duration_minutes]
