@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const {
   getPlatformDB,
+  getTenantDB,
   verifyPassword,
   hashPassword,
   generateToken,
@@ -122,6 +123,55 @@ router.get('/platform/tenants/:id', requirePlatformAdmin, async (req, res, next)
     const tenant = await getTenantById(req.params.id);
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     res.json(decorateTenant(tenant));
+  } catch (e) { next(e); }
+});
+
+// GET /platform/tenants/:id/usage — live usage/activity pulled from the tenant's
+// own DB: how many users they've created and whether they're actually using it.
+router.get('/platform/tenants/:id/usage', requirePlatformAdmin, async (req, res, next) => {
+  try {
+    const tenant = await getTenantById(req.params.id);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+    if (!tenant.db_name || tenant.status === 'deleted') return res.json({ available: false });
+
+    const pool = getTenantDB(tenant.db_name);
+    const one = (sql) => pool.execute(sql).then(([r]) => r[0] || {}).catch(() => ({}));
+
+    const [emp, pu, te, idle] = await Promise.all([
+      one(`SELECT COUNT(*) total, COALESCE(SUM(is_active=1),0) active FROM employees`),
+      one(`SELECT COUNT(*) total,
+                  COALESCE(SUM(portal_role='sys-admin'),0) admins,
+                  COALESCE(SUM(portal_role='team-lead'),0) team_leads,
+                  COALESCE(SUM(status='pending'),0) pending
+             FROM portal_users`),
+      one(`SELECT COUNT(*) total,
+                  COALESCE(SUM(clock_in >= DATE_SUB(NOW(), INTERVAL 7 DAY)),0)  clock_ins_7d,
+                  COALESCE(SUM(clock_in >= DATE_SUB(NOW(), INTERVAL 30 DAY)),0) clock_ins_30d,
+                  COALESCE(SUM(clock_out IS NULL),0) clocked_in_now,
+                  MAX(clock_in) last_clock_in,
+                  COUNT(DISTINCT CASE WHEN clock_in >= DATE_SUB(NOW(), INTERVAL 7 DAY)  THEN portal_user_id END) active_users_7d,
+                  COUNT(DISTINCT CASE WHEN clock_in >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN portal_user_id END) active_users_30d
+             FROM portal_time_entries`),
+      one(`SELECT COALESCE(SUM(duration_minutes),0) minutes, COUNT(*) sessions
+             FROM idle_sessions WHERE idle_start >= DATE_SUB(NOW(), INTERVAL 30 DAY)`),
+    ]);
+
+    const n = (v) => Number(v || 0);
+    res.json({
+      available: true,
+      employees:    { total: n(emp.total), active: n(emp.active) },
+      portal_users: { total: n(pu.total), admins: n(pu.admins), team_leads: n(pu.team_leads), pending: n(pu.pending) },
+      activity: {
+        total_sessions:  n(te.total),
+        clock_ins_7d:    n(te.clock_ins_7d),
+        clock_ins_30d:   n(te.clock_ins_30d),
+        clocked_in_now:  n(te.clocked_in_now),
+        active_users_7d: n(te.active_users_7d),
+        active_users_30d:n(te.active_users_30d),
+        last_clock_in:   te.last_clock_in || null,
+      },
+      idle_30d: { minutes: n(idle.minutes), sessions: n(idle.sessions) },
+    });
   } catch (e) { next(e); }
 });
 
