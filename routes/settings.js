@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { getDB } = require('../db');
+const { initTenantSchema } = require('../db/init');
 const { requireAdmin } = require('../middleware/auth');
 const { CURRENCIES, COUNTRIES, COUNTRY_DEFAULT_CURRENCY } = require('../services/locales');
 const { getPreset } = require('../services/taxModules');
@@ -159,8 +160,7 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
       if (auto && CURRENCIES.some(c => c.code === auto)) nextCurrency = auto;
     }
 
-    await pool.execute(
-      `UPDATE tenant_settings SET
+    const updateSql = `UPDATE tenant_settings SET
          currency             = ?,
          country_code         = COALESCE(?, country_code),
          company_name         = COALESCE(?, company_name),
@@ -175,24 +175,37 @@ router.put('/settings/workspace', requireAdmin, async (req, res, next) => {
          daily_report_enabled = COALESCE(?, daily_report_enabled),
          weekly_report_day    = COALESCE(?, weekly_report_day),
          monthly_required_hours_override = ${nextMonthlyOverride === undefined ? 'monthly_required_hours_override' : '?'}
-       WHERE singleton_key = 1`,
-      [
-        nextCurrency,
-        country_code   || null,
-        company_name   ?? null,
-        company_address ?? null,
-        company_logo_url ?? null,
-        slip_title     ?? null,
-        slip_signatory_name  ?? null,
-        slip_signatory_title ?? null,
-        nextDailyHours,
-        nextWorkingDays,
-        nextReportHour,
-        nextReportEnabled,
-        nextWeeklyDay,
-        ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
-      ]
-    );
+       WHERE singleton_key = 1`;
+    const updateParams = [
+      nextCurrency,
+      country_code   || null,
+      company_name   ?? null,
+      company_address ?? null,
+      company_logo_url ?? null,
+      slip_title     ?? null,
+      slip_signatory_name  ?? null,
+      slip_signatory_title ?? null,
+      nextDailyHours,
+      nextWorkingDays,
+      nextReportHour,
+      nextReportEnabled,
+      nextWeeklyDay,
+      ...(nextMonthlyOverride === undefined ? [] : [nextMonthlyOverride]),
+    ];
+
+    try {
+      await pool.execute(updateSql, updateParams);
+    } catch (e) {
+      // Self-heal: a tenant DB the boot migration missed can lack newer columns
+      // (e.g. daily_report_hour) → "Unknown column ... in 'field list'". Re-run
+      // the canonical idempotent schema to add whatever's missing, then retry.
+      if (e && e.code === 'ER_BAD_FIELD_ERROR') {
+        await initTenantSchema(pool);
+        await pool.execute(updateSql, updateParams);
+      } else {
+        throw e;
+      }
+    }
 
     // Timezone is updated separately (not COALESCE) so it can be explicitly
     // cleared, and so an unrelated settings save never touches it.
