@@ -293,20 +293,32 @@ router.post('/employee/idle', requireEmployee, async (req, res) => {
       [req.portalUserId, mysqlStart, mysqlStart]
     );
     const time_entry_id = entries[0]?.id || null;
-    // One row per idle PERIOD: the desktop reports the same idle_start repeatedly
-    // as the idle continues, so extend the existing row (grow idle_end + total)
-    // instead of inserting a new segment each time. Keeps history clean:
-    // "Idle From <start> · Resumed At <end> · Duration <total>".
+    // One row per idle PERIOD. The desktop reports the running idle repeatedly;
+    // find an existing row this report CONTINUES — same start, or contiguous /
+    // overlapping within 30s (covers older builds that posted advancing
+    // segments) — and merge into a single window. Crucially the total is
+    // recomputed ONCE over the whole period, so we don't inflate it by rounding
+    // each little segment up to a minute.
     const [existing] = await pool.execute(
-      'SELECT id FROM idle_sessions WHERE portal_user_id = ? AND idle_start = ? LIMIT 1',
-      [req.portalUserId, mysqlStart]
+      `SELECT id, idle_start, idle_end FROM idle_sessions
+       WHERE portal_user_id = ?
+         AND idle_start <= ?
+         AND idle_end   >= DATE_SUB(?, INTERVAL 30 SECOND)
+       ORDER BY idle_start DESC LIMIT 1`,
+      [req.portalUserId, mysqlStart, mysqlStart]
     );
     if (existing.length) {
+      const row = existing[0];
+      const ms = Math.min(new Date(row.idle_start).getTime(), new Date(idle_start).getTime());
+      const me = Math.max(new Date(row.idle_end).getTime(),   new Date(idle_end).getTime());
+      const mergedStart = toMySQLDatetime(new Date(ms).toISOString());
+      const mergedEnd   = toMySQLDatetime(new Date(me).toISOString());
+      const mergedDur   = Math.ceil((me - ms) / 60000);
       await pool.execute(
-        'UPDATE idle_sessions SET idle_end = ?, duration_minutes = ?, time_entry_id = COALESCE(time_entry_id, ?) WHERE id = ?',
-        [mysqlEnd, duration_minutes, time_entry_id, existing[0].id]
+        'UPDATE idle_sessions SET idle_start = ?, idle_end = ?, duration_minutes = ?, time_entry_id = COALESCE(time_entry_id, ?) WHERE id = ?',
+        [mergedStart, mergedEnd, mergedDur, time_entry_id, row.id]
       );
-      return res.json({ success: true, updated: true, duration_minutes, time_entry_id });
+      return res.json({ success: true, merged: true, duration_minutes: mergedDur, time_entry_id });
     }
     await pool.execute(
       'INSERT INTO idle_sessions (portal_user_id, time_entry_id, idle_start, idle_end, duration_minutes) VALUES (?,?,?,?,?)',
