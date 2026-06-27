@@ -75,6 +75,25 @@ function tenantInBeta(tenant, feature) {
   return !!slug && !!BETA_ACCESS[feature]?.has(slug);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-tenant FULL access
+//
+// Workspaces listed here get EVERY feature regardless of their plan (Starter or
+// Growth) — internal/partner/demo accounts that should evaluate the whole
+// product. Unlike BETA_ACCESS (which unlocks ONE feature), this unlocks the full
+// set, including any beta-gated modules.
+// ─────────────────────────────────────────────────────────────────────────────
+const FULL_ACCESS_SLUGS = new Set(['japan-station']);
+
+function tenantHasFullAccess(tenant) {
+  const slug = String(tenant?.slug || '').toLowerCase().trim();
+  return !!slug && FULL_ACCESS_SLUGS.has(slug);
+}
+
+// The complete feature set = every plan feature (Growth superset) plus every
+// beta-gated feature.
+const ALL_FEATURES = new Set([...GROWTH_FEATURES, ...Object.keys(BETA_ACCESS)]);
+
 // Map each feature to the minimum plan that includes it. Used by FE upgrade
 // nudges so a 402 from any feature gate can say "Upgrade to <plan>" cleanly.
 const FEATURE_MIN_PLAN = {
@@ -116,6 +135,7 @@ function planOf(tenant) {
 
 // Public: does this tenant include the given feature?
 function tenantHas(tenant, feature) {
+  if (tenantHasFullAccess(tenant)) return true;     // full-access workspace gets everything
   if (tenantInBeta(tenant, feature)) return true;   // beta override wins over plan
   const plan = planOf(tenant);
   return FEATURES[plan].has(feature);
@@ -123,6 +143,7 @@ function tenantHas(tenant, feature) {
 
 // Public: list of all features the tenant has access to.
 function tenantFeatures(tenant) {
+  if (tenantHasFullAccess(tenant)) return [...ALL_FEATURES];
   const list = [...FEATURES[planOf(tenant)]];
   for (const feature of Object.keys(BETA_ACCESS)) {
     if (tenantInBeta(tenant, feature) && !list.includes(feature)) list.push(feature);
